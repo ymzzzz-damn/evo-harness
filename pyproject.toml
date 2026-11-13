@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "robocasa-atomic-evo"
+version = "0.1.0"
+description = "Two-loop, initially empty atomic code skill learning for RoboCasa"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.23"]
+
+[project.optional-dependencies]
+test = ["pytest>=6"]
+control = ["scipy>=1.9", "Pillow>=9"]
+
+[project.scripts]
+atomic-evo = "evo.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["evo*"]

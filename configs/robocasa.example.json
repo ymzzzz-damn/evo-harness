@@ -1,0 +1,39 @@
+{
+  "library": "./library",
+  "agent": {
+    "provider": "http",
+    "model": "YOUR_VISION_MODEL",
+    "base_url": "http://localhost:8000/v1",
+    "api": "responses",
+    "reasoning_effort": "high",
+    "api_key_env": "OPENAI_API_KEY",
+    "timeout_s": 240,
+    "max_retries": 2,
+    "format_attempts": 2
+  },
+  "exploration": {
+    "max_attempts": 5,
+    "max_replans": 1,
+    "code_timeout_s": 180
+  },
+  "maintenance": {
+    "max_candidates": 3,
+    "code_timeout_s": 180
+  },
+  "maintain_after_task": true,
+  "tasks": [
+    {
+      "task": "TurnOnMicrowave",
+      "seed": 0,
+      "camera_size": [
+        512,
+        512
+      ]
+    }
+  ],
+  "episode_retry": {
+    "max_episodes": null,
+    "history_episodes": 3
+  },
+  "maintenance_trigger": "atomic"
+}
