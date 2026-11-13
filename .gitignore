@@ -1,0 +1,46 @@
+# Python/build caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+.coverage
+htmlcov/
+
+# Local credentials and private configuration
+.env
+.env.*
+!.env.example
+*credentials*.json
+auth.json
+*.pem
+*.key
+configs/*.local.json
+
+# Learned skills, generated libraries, and experiment artifacts
+library/
+libraries/
+assisted_library/
+code_tools/
+learned_tools/
+runs/
+experiments/
+validation/
+work/
+cleanup/
+backups/
+outputs/
+artifacts/
+observations/
+logs/
+model_logs/
+*.log
+*.jsonl
+*.npy
+*.npz
+*.mp4
+*.hdf5
+*.h5
