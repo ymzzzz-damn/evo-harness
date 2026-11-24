@@ -6,7 +6,7 @@ import json
 import sys
 
 from .agent import Agent, CommandProvider, HTTPProvider, ScriptedProvider
-from .catalog import CATALOG
+from .catalog import CATALOG, ACTION_CATALOG, PERCEPTION_CATALOG, COORDINATION_CATALOG, CATALOG_VERSION
 from .io import read_json, write_json
 from .library import Library
 from .loops import ExplorationLoop, MaintenanceLoop, SkillExecutor, validate_plan
@@ -17,7 +17,7 @@ from .robocasa_adapter import RoboCasaAdapter, HOST_PREDICATES
 def adapter_factory(config, output):
     if config.get("backend", "robocasa") != "robocasa":
         raise ValueError("The CLI benchmark backend must be robocasa")
-    kwargs = {k:config[k] for k in ("layout_ids", "style_ids", "camera_size") if k in config}
+    kwargs = {k:config[k] for k in ("layout_ids", "style_ids", "camera_size", "scene_split", "horizon") if k in config}
     return RoboCasaAdapter(config["task"], seed=config.get("seed", 0), output_dir=output, **kwargs)
 
 
@@ -38,7 +38,12 @@ def create_agent(config, output):
 
 def _loop_options(config):
     values = config.get("exploration", {})
-    return {k:values[k] for k in ("max_attempts", "max_replans", "code_timeout_s") if k in values}
+    options = {k:values[k] for k in ("max_attempts", "max_replans", "code_timeout_s", "max_plan_segments",
+                                    "plan_one_step", "record_working_memory") if k in values}
+    if config.get("maintenance", {}).get("admission_policy") == "compare_existing":
+        options.setdefault("plan_one_step", True)
+        options.setdefault("record_working_memory", True)
+    return options
 
 
 def _episode_retry_options(config):
@@ -68,6 +73,9 @@ def _compact_attempt(record):
               "success": bool(record.get("success", False)), "skipped": bool(record.get("skipped", False))}
     if record.get("sha256"):
         result["sha256"] = record["sha256"]
+    for key in ("executed", "failure_feedback", "description"):
+        if key in record:
+            result[key] = copy.deepcopy(record[key])
     result["execution"] = {key: copy.deepcopy(execution[key]) for key in
                            ("ok", "result", "error", "elapsed_s") if key in execution}
     for key in ("before", "after"):
@@ -144,7 +152,8 @@ def _campaign_event(event, **values):
 
 def run_config(config, output):
     retry_enabled, max_episodes, history_limit = _episode_retry_options(config)
-    maintenance_trigger = config.get("maintenance_trigger", "atomic")
+    comparison_policy = config.get("maintenance", {}).get("admission_policy") == "compare_existing"
+    maintenance_trigger = config.get("maintenance_trigger", "episode" if comparison_policy else "atomic")
     if maintenance_trigger not in {"atomic", "episode"}:
         raise ValueError("maintenance_trigger must be atomic or episode")
     maintenance_enabled = config.get("maintain_after_task", True)
@@ -172,10 +181,11 @@ def run_config(config, output):
             if not runs:
                 record["maintenance_status"] = "not_needed" if maintenance_enabled else "disabled"
                 continue
-            aggregate = {"status": "complete", "proposals": [], "promoted": [], "rejected": [], "accepted_cases": []}
+            aggregate = {"status": "complete", "proposals": [], "promoted": [], "rejected": [],
+                         "accepted_cases": [], "drafts": [], "kept": [], "retained_failures": []}
             for run in runs:
                 outcome = run.get("result") or {}
-                for key in ("proposals", "promoted", "rejected", "accepted_cases"):
+                for key in ("proposals", "promoted", "rejected", "accepted_cases", "drafts", "kept", "retained_failures"):
                     aggregate[key].extend(outcome.get(key, []))
             running = any(run["status"] == "running" for run in runs)
             failed = any(run["status"] not in {"running", "complete"} or
@@ -190,6 +200,12 @@ def run_config(config, output):
         report["promoted_versions"] = sum(len(record["maintenance"]["promoted"])
             for record in report["episodes"] if record["maintenance"])
         report["accepted_case_count"] = sum(len(record["maintenance"]["accepted_cases"])
+            for record in report["episodes"] if record["maintenance"])
+        report["draft_count"] = sum(len(record["maintenance"]["drafts"])
+            for record in report["episodes"] if record["maintenance"])
+        report["kept_count"] = sum(len(record["maintenance"]["kept"])
+            for record in report["episodes"] if record["maintenance"])
+        report["retained_failure_count"] = sum(len(record["maintenance"]["retained_failures"])
             for record in report["episodes"] if record["maintenance"])
 
     try:
@@ -265,7 +281,8 @@ def run_config(config, output):
                 task_record["episode_attempts"].append(_attempt_summary(result, run_directory, attempt))
                 # Episode mode also maintains verified partial work from failed
                 # episodes. Atomic mode sweeps only paths not already dispatched.
-                maintain_pending(result.get("pending", []), "episode" if maintenance_trigger == "episode" else "episode_pending")
+                paths = result.get("pending", []) + (result.get("incomplete", []) if comparison_policy else [])
+                maintain_pending(paths, "episode" if maintenance_trigger == "episode" else "episode_pending")
                 succeeded = result.get("status") == "success" and result.get("native_success") is True
                 retryable = result.get("status") in {"step_failed", "plan_complete_task_failed"}
                 has_budget = max_episodes is None or attempt < max_episodes
@@ -368,7 +385,7 @@ def main(argv=None):
     sub.add_argument("--library", required=True)
     sub.add_argument("atom", choices=CATALOG)
     sub.add_argument("version", type=int)
-    for name in ("run", "explore", "maintain", "evaluate"):
+    for name in ("run", "explore", "maintain", "evaluate", "evaluate-policy"):
         sub = commands.add_parser(name)
         sub.add_argument("--config", required=True)
         sub.add_argument("--output", required=True)
@@ -379,12 +396,17 @@ def main(argv=None):
         result = CATALOG
     elif args.command in ("init", "inspect"):
         lib = Library(args.library)
-        result = dict(root=str(lib.root), defined_atoms=len(CATALOG), active=lib.snapshot())
+        result = dict(root=str(lib.root), defined_atoms=len(CATALOG), executable_atoms=len(CATALOG),
+                      perception_atoms=len(PERCEPTION_CATALOG), action_atoms=len(ACTION_CATALOG), coordination_atoms=len(COORDINATION_CATALOG), atomic_catalog_version=CATALOG_VERSION, active=lib.snapshot(),
+                      working_memory=lib.working_catalog())
     elif args.command == "rollback":
         result = Library(args.library).rollback(args.atom, args.version)
     else:
         config = read_json(args.config)
-        if args.command == "evaluate":
+        if args.command == "evaluate-policy":
+            from .policy_evaluation import run_policy_evaluation
+            result = run_policy_evaluation(config, args.output)
+        elif args.command == "evaluate":
             result = evaluate_frozen(config, args.output)
         elif args.command == "maintain":
             lib = Library(config["library"])

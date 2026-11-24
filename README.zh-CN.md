@@ -1,175 +1,158 @@
 # RoboCasa 原子能力双循环框架
 
-本项目实现一个从空技能库开始、由模型逐步填写 `skill(api, params)` 的研究框架。
-固定 P01–P40 定义能力槽位；任务探索产生可执行代码，独立维护循环负责参数化、重新验证和发布。
-本仓库只发布框架源码、测试和示例配置；不包含已学习的 code tool、技能库、模型响应、仿真轨迹或实验产物。
+本项目从空技能库开始，让模型通过填写 `skill(api, params)` 学习可复用代码。当前唯一能力目录是 **P/A/C32：3 项感知、26 项执行、3 项调度，共 13 个能力族**。全部 32 项都可生成代码、修复、参数化、验证入库和被其他能力调用；目录定义并不代表这些能力已经实现或通过 benchmark 验证。
 
-## 两个循环如何衔接
+本仓库只发布框架源码、测试、静态目录、部署工具和示例配置，不包含沉淀的 code tool、已填充技能库、模型对话、仿真资产、凭据或实验产物。
+
+## 两个循环
 
 ```text
-任务 instruction + 初始 RGB-D / 机器人测量 + 已发布技能
-                 ↓
-        规划完整的有序原子步骤及各步后验条件
-                 ↓
-探索 loop：尝试 active 版本 / 填写空函数 → 真实 env.step → host 验证
-                 ↑                              ↓
-           失败反馈 + 当前观测 ← 失败          成功经验 pending
-                 │                              ↓
-         必要时重新规划未完成后缀       维护 loop：参数化 distill
-                                                ↓
-                           新建环境 → 回放前缀 → 验证候选原子
-                                                ↓
-                            当前原子的全部已登记旧案例回归
-                                                ↓
-                               全通过 → 新版本 → active
+instruction + 当前 RGB-D / 机器人测量 + active 技能 + 失败记忆
+                              ↓
+探索 loop：规划下一步 → 复用 / 生成 / 修复代码 → 执行 → host 检查
+                              ↓                         ↓
+                     记录每次尝试             原子成功后规划下一步
+                              ↓
+             episode 成功 / 预算耗尽 / 中断性错误
+                              ↓
+维护 loop：成功代码参数化；失败代码参数化并记录反馈与原因假设
+                              ↓
+        空能力首次回放 / 已有能力比较更新 / 失败候选保存草稿
+                              ↓
+                后续 task 或 reset 后重新观察、复用和修复
 ```
 
-单个 episode 内的代码尝试共享物理状态；后续代码接收失败后的观测，不会在每次 repair 前重置场景。
-开启跨 episode 重试后，host 可在失败 episode 结束后显式新建环境；这一 reset 与同 episode 内的 repair 是两层操作。
-预算由原生任务 horizon、每原子尝试次数、重规划次数和代码执行超时共同限制。
-任务完成始终以原生 RoboCasa verdict 为准，函数返回值只承载诊断信息。
-默认 `maintenance_trigger: "atomic"`：每个真正执行且通过 host 检查的原子步骤立即写入 pending，随后同步进入独立维护循环；无需等待整个 task 或 episode 成功。
-维护时暂停当前探索环境，在另一 fresh 环境中验证；发布后继续原探索，后续 repair/replan 可立即看到并调用新能力。
-后续任务失败、horizon 耗尽、reset 或 provider 出错都不撤销已发布的局部能力。维护异常单独记录，探索与 reset 继续进行。
-`maintenance_trigger: "episode"` 可改为每轮结束维护，包括失败轮；`maintain_after_task: false` 或 `explore` 命令关闭自动维护。
-也可以分别执行 `explore` 和 `maintain`。跳过的已满足步骤、未知验证结果、仅函数自报成功的代码均不能成为新能力证据。
+示例配置选择 `plan_one_step=true`、`record_working_memory=true`、`admission_policy="compare_existing"` 和 `maintenance_trigger="episode"`。每次原子成功后，模型根据整体 instruction 和最新观测规划下一步；每个 episode 结束整理已有收获，无需等待整个 task 成功，也无需等待所有 reset 重试结束。
 
-维护在新建环境中按原 task/seed 重建起点，执行记录的前缀，再运行参数化候选。
-新经验保存 `entry_observation`、`entry_trace`（之前所有真实执行，包括失败尝试的物理准备）和当前原子的完整 `attempt_history`。
-入口回放使用记录的代码及锁定依赖；候选必须自己完成当前原子的全部必要准备，不能只复用最后一次 repair 的中间状态。
-旧经验缺少 trace 时仍用历史 prefix 规则；回放失败会区分 prefix、target、suffix，无法重建的旧经验不会污染正式回归库。
-新 case 先进入 `pending_cases`，候选必须通过该 case 和所有**已独立回放通过**的正式案例，才会同事务发布版本并激活 case。失败的新 case 保留为待验证，不成为后续无关更新的必过门槛。
-已发布技能在新任务中成功复用后也须独立回放，再激活新 case；成功复用不重复生成相同代码版本。
-局部发布仅证明该原子的已验证效果，不保证整个任务。整任务成功的续接经验另存 `exploration/continuations/`；显式传给 `maintain --experience` 后才建立包含 suffix 和原生成功的更强回归义务。
-旧库首次由新版打开时迁移到 schema 2：已发布 fresh replay 覆盖的 case 保留正式状态，其他 case 转待验证，已发布代码保留；旧冻结 worker 会拒绝新版库，需以新源码创建新 run。
-这是一套经验回归机制：只覆盖已经登记的案例，不自动证明所有历史任务或未知场景都成功。
+| 情况 | 维护行为 | 证据边界 |
+| --- | --- | --- |
+| 接口没有 active，原子操作已成功 | 参数化后在独立环境重建入口、执行候选；通过才首次发布 | `fresh_environment_replay` |
+| 已有 active，成功代码及精确依赖相同 | 忽略注释和格式进行 AST 比较，保留版本并记录经验 | 无需模型比较或重复回放 |
+| 已有 active，成功代码有实质差异 | 比较新旧代码、执行反馈和参数契约，决定保留、更新或暂存草稿 | `code_comparison`，`replay_verified=false` |
+| 原子失败或动作预算耗尽时尚未完成 | 参数化失败函数，保存反馈、原因分析和建议改动 | draft，不替换 active，不作为可调用依赖 |
+| 首次回放失败 | 保留候选草稿，接口仍未首次发布 | 后续仍需独立验证 |
 
-## 空槽位、代码和接口边界
+比较更新不等于回归成功，也不证明全部旧场景或未知场景仍然成功。历史版本、真实回放证据和失败记录保留，可回滚。函数返回的 `status/evidence/phase` 是诊断，不能替代 host 检查；整任务完成始终由原生 RoboCasa verdict 判定。
 
-`catalog.py` 定义 P01–P40 的名字、类别与建议参数；`library/stubs/Pxx.py` 起初全部抛出 `NotImplementedError`。
-`init` 后 `active` 是空字典。目录里存在 P40 等 40 个定义，不代表已经实现 40 种物理能力。
-P32–P39 中的柔性物折叠、撕离等行为不能仅凭当前 RoboCasa 厨房刚体环境获得覆盖，需要相应仿真任务和评估器。
+每次尝试记录源码、参数、锁定依赖、入口轨迹、观测和执行反馈。失败代码也参数化；`failure_feedback` 保存 host 事实，`failure_analysis` 区分观测到的失败、未验证的原因假设和建议改动。下次遇到同一能力时，模型读取相关草稿及原因，结合新场景重新绑定参数并修改。没有充分证据的局部完成度记为未知。
 
-```python
-def skill(api, params):
-    # 以下仅演示函数约定，不是操作技能或成功策略。
-    observation = api.observe()
-    api.wait(params["duration"])
-    return {"observed_step": observation["step"]}
-```
+`maintenance.admission_policy="replay"` 保留独立回放和正式案例回归模式，默认可在原子成功后维护；`reuse_replay_evidence=true` 可复用同一会话内、相同代码和验证上下文下的成功旧案例证据。新案例仍须 fresh replay，失败不缓存，代码或依赖变化后重新验证。
 
-候选必须读取 `params`，返回诊断字典；不允许以返回 `success=True` 取代 host 判定。
-目标、相机像素、位姿、方向和时长等场景绑定由计划中的 `params` 传入，不能把 seed 专用轨迹伪装成泛化代码。
-规划应尽量直接给出可执行的相机/像素等绑定；运行中的 Python 没有 VLM，不能把“看图找到 Start”当作已实现的接口。
-repair 模型看到新图后，可在候选的可选 `params` 字段返回**完整替换参数**；省略时沿用当前参数，不能改 atom、goal 或 postcondition。
-代码继续从 `params` 读取新像素；参数变更记录来源。看不清时可先执行有界观察姿态调整，由下一次模型请求读取新图。
-distill 接收原子入口观测。host 提供待验证 case 时，可额外返回完整 `params`，重新绑定该新 case 的入口像素/参数；生成新 case ID 并重新验证，不改动历史正式案例、goal 或 postcondition。
-执行环境提供 `np`、`math` 及有限内置函数；代码不能导入模块、读写文件、调用网络、访问私有属性或修改模拟器。
-AST 检查和时限是执行约束，不是操作系统安全沙箱；此框架面向受控研究 worker。
+## 能力表
 
-| 基础 API | 含义与单位 |
+`evo/atomic_skills.json` 是唯一能力定义源，版本为 `robocasa-human300-pac32-v1`。每项保存语义签名、参数、前后条件、变体、可观测检查、有限恢复和验收维度。所有代码统一使用 `skill(api, params) -> dict`，语义签名的参数放入 `params`。
+
+| 能力族 | 原子接口 | 接口需要完成什么 | RoboCasa 中的应用 |
+|---|---|---|---|
+| **1. 感知与效果检查** | **P01 `ground_targets`** 目标与属性识别 | 根据指令和当前图像识别目标、参考物及类别、材质、大小等属性；返回候选对象、属性证据和不确定性。 | 挑选成熟水果；筛选金属餐具；选择可微波物品；识别目标饭盒。 |
+| 同上 | **P02 `estimate_geometry`** 几何与机构估计 | 估计物体位姿、容器开口、支撑面、把手及运动机构；给出接近方向、可达区域和估计误差，场景变化后更新。 | 估计柜门铰链、抽屉滑轨、杯口和咖啡机承接位；导航后的操作位重定位。 |
+| 同上 | **P03 `observe_effect`** 效果检查与历史状态记录 | 检查抓稳、释放、包含、开合、姿态、接触与颜色等效果；记录持续时间和事件顺序，返回满足、未满足或未知。 | 确认水壶先冷却再搬走；记录擦拭覆盖；观察酱汁变色；记录秤上等待。 |
+| **2. 移动与操作接近** | **A01 `navigate_align`** 导航与操作位对齐 | 移动底盘到当前场景中的目标操作位置，调整朝向并停稳；携物时保持持握和姿态约束，到达后确认目标可操作。 | 移动到水槽、冰箱、橱柜和餐桌前；跨区域搬运的移动阶段。 |
+| **3. 抓取、释放与放置** | **A02 `grasp_lift`** 抓取与稳定提起 | 接近目标本体或把手，建立抓握并稳定提起；结合夹爪状态和物体随动检查抓稳，结束时目标由夹爪持有。 | 抓杯子、食材、吸管、餐具、海绵、盖子和锅柄；从柜内、水槽或窄槽取物。 |
+| 同上 | **A03 `release_retreat`** 释放与安全撤离 | 在物体已有支撑或接触操作完成后，解除抓握或接触并安全撤离；确认目标状态保持，夹爪不再带动物体。 | 放物后松爪撤手；操作门把手、旋钮和按钮后退出；擦拭后释放工具。 |
+| 同上 | **A04 `place_on`** 支撑面放置 | 将已持物体移到指定支撑区域，控制下降和接触，完成稳定放置；可复用 A03 释放撤离，并复查支撑关系。 | 放到台面、砧板、炉头和层架；从抽屉取物放到台面；搬运锅具。 |
+| 同上 | **A05 `place_in`** 容器及承接区放置 | 经打开的入口把已持物体放入指定容器或内部区域，处理边缘、深度和容量约束；释放后检查包含关系。 | 食材入碗或锅；物品入饭盒、橱柜、冰箱和水槽；向多个饭盒装食物。 |
+| **4. 空间关系与堆叠** | **A06 `place_pose`** 相对位置与姿态调整 | 以参考物为基准调整位置和朝向，满足左右、相邻、对齐、指定层、倒置或杯柄朝向等关系，同时保护已有放置效果。 | 摆放刀叉；倒置杯子；统一杯柄朝向；旋转锅具；布置滤网。 |
+| 同上 | **A07 `insert_dock`** 窄口插入与功能位置对接 | 根据开口轴向、深度和功能位置对齐并小步进退，完成插入、取离或对接；处理卡边并检查功能位置关系。 | 吸管入杯；面包进出吐司机槽；杯子对接咖啡出液口或从该位置取走。 |
+| 同上 | **A08 `stack_nest`** 堆叠与嵌套 | 按大小和顺序形成稳定的上下或嵌套关系；完成对齐、落放与释放，新增一层时保持已有层次稳定。 | 柜内叠碗、水槽叠碗、堆罐子、按大小堆叠酸奶容器。 |
+| **5. 带内容物搬运** | **A09 `carry_preserve`** 带内容物控姿搬运 | 搬运已抓稳且装有内容物的容器，限制倾角、速度和加速度；移动中及放置后检查内容物保留和容器姿态。 | 搬运装食物的碗或锅；碗中放杯后搬碗；整碗放入微波炉或冰箱。 |
+| **6. 机构与盖体开合** | **A10 `operate_hinged`** 铰链与门体开合 | 识别铰链和受力点，沿允许的运动轨迹将门体、盖体或机头调到目标开度，再释放撤离并复查。 | 橱柜门、冰箱门、微波炉门、烤箱门、洗碗机门；厨师机机头；电热水壶铰接盖。 |
+| 同上 | **A11 `slide_joint`** 滑轨推拉 | 沿导轨方向推拉，使目标达到指定伸出量或位置；检查前置门状态、沿途阻挡和架上物品稳定性。 | 普通抽屉、冰箱抽屉、洗碗机架、烤箱架、小烤箱托盘；滑门变体。 |
+| 同上 | **A12 `detach_seat_lid`** 可拆盖取放与盖合 | 将可拆盖取下并暂存，或对准开口重新盖合；开盖后确认开口可用，盖合后确认正确落座并释放。 | 搅拌机开盖、盖合；放入食材后重新盖上搅拌机盖。 |
+| **7. 控制件操作** | **A13 `press_button`** 按钮按压 | 定位正确按钮，沿有效方向完成按压、释放和撤手；结合设备响应检查效果，无响应时有限重试。 | 微波炉启动与停止；咖啡机、搅拌机按钮；电热水壶开盖按钮。 |
+| 同上 | **A14 `toggle_lever`** 拨杆与短行程开关 | 沿允许方向拨动或压下控制杆，使其达到目标位置或开关状态；观察保持、回弹和设备响应。 | 吐司机启动压杆；电热水壶电源拨杆。 |
+| 同上 | **A15 `turn_control`** 旋钮与水龙头手柄调节 | 识别控制件及对应设备，调节到目标开关、档位、角度或区间；渐进调整并观察设备状态。 | 炉头开关及火力；烤箱温度；小烤箱定时；水龙头水流与水温；厨师机速度。 |
+| 同上 | **A16 `sweep_spout`** 出水嘴转向与区域覆盖 | 调整出水嘴到指定方向，或依次覆盖多个区域；任务要求保持出水时维持水流，并记录已覆盖区域。 | 出水嘴朝左、中、右；冲洗不同水槽区域。 |
+| **8. 持容器动态操作** | **A17 `tilt_preserve`** 保留内容物的受控倾斜 | 对抓稳的容器执行有界倾斜和保持，使内容物发生要求的移动但不掉出；随后恢复安全姿态并放回目标支撑。 | `TiltPan`：倾斜平底锅移动锅内食材，再将锅放回炉头。 |
+| 同上 | **A18 `dump_contents`** 倒料与容器清空 | 对准承接区域，将指定内容物倒出原容器，检查清空及去向，再按任务恢复容器姿态或放回。 | `DrainVeggies`：把蔬菜倒入水槽；`DumpLeftovers`：清空碗内剩菜。 |
+| 同上 | **A19 `shake_container`** 持物摇动与回放 | 对容器执行受控往复运动，达到要求的运动量或持续时间；保持内容物受控，结束后放回目标支撑。 | `ShakePan`：轻摇锅具，使锅内食材移动，再把锅放回炉头。 |
+| **9. 定向接触与工具操作** | **A20 `press_contact`** 定向接触与持续压持 | 使已持工具或物体的正确接触面朝向目标，建立并保持足够时长的接触；限制压入距离，按任务释放或撤离。 | 锅铲压鸡肉；水果切面朝下压榨汁锥。 |
+| 同上 | **A21 `scrub`** 擦拭与刷洗覆盖 | 使用已持工具与表面保持有效接触，完成要求的接触位置、覆盖范围和持续时间，随后释放撤离。 | 海绵擦砧板；刷洗碗的曲面。 |
+| 同上 | **A22 `stir`** 工具搅动 | 将已持工具伸入容器，与内容物有效接触并使其运动；完成有效搅动过程，同时保持食材仍在容器内。 | `StirVegetables`：用锅铲搅动锅内多份蔬菜。 |
+| **10. 水流作用** | **A23 `rinse_hold`** 流水下冲洗与浸润保持 | 在水流及水温条件满足时，将目标保持在有效水流区域，记录连续或累计作用时间；中断时按任务重计或暂停，随后放置或关水。 | 冲洗生菜、鱼、碗和砧板；浸润海绵；倒出蔬菜后清洗。 |
+| 同上 | **A24 `fill_under_flow`** 承接水流装填保持 | 将容器开口对准水流并保持正立，持续承接到要求的时长或可观测装填目标；对齐丢失时重新观察和调整。 | `FillBlenderJug`：将搅拌杯保持在水流下完成装填过程。 |
+| **11. 事件等待与状态保持** | **A25 `wait_until`** 事件等待与持续条件保持 | 等待指定事件、状态变化或最短时长，同时检查需要保持的条件；满足条件后进入下一阶段，超过期限则返回。 | 等吐司机弹杆、锅预热、水壶冷却、秤上稳定或酱汁变色。 |
+| **12. 自由物体推移** | **A26 `push_slide`** 自由物体平面推移 | 在稳定支撑面上建立接触，分段推动物体到目标区域；观察实际位移，保持支撑并避免碰落其他物体。 | `RinseCuttingBoard`：初始位置需要时，把砧板推到有效水流区域。 |
+| **13. 多目标分配与执行调度** | **C01 `assign_objects`** 筛选、计数、排序与分配 | 按可观测属性、数量和目标关系筛选、排序、配对与分配；跟踪未完成集合，避免重复操作和误动干扰物。 | 等量装饭盒；向不同杯子分配冰块；按大小排序；饮料分类。 |
+| 同上 | **C02 `clear_space`** 腾挪空间与障碍重排 | 识别占位物和允许搬动的对象，安排合法暂存或重排，再完成目标放置；保护已有分类、内容物和需要保留的关系。 | 为饭盒或调料腾出冰箱空间；重排冰箱物品；清理砧板。 |
+| 同上 | **C03 `execute_skill_graph`** 阶段衔接、预算与有限恢复 | 根据能力前后条件安排执行流程，处理夹爪占用、历史事件和已完成效果；分配预算、有限重试，无法可靠继续时交还控制。 | 装碗→搬碗→关门→启动微波炉；关火→原位冷却→搬壶；洗碗机层架与门的操作顺序。 |
+
+`init` 为全部 32 项生成空 stub，`active` 为空；`implemented=false` 表示没有预填实现。感知和调度与执行能力走同一代码学习、维护和调用流程。A12 包含可拆盖暂存或盖合，A17/A19 包含操作后放回支撑；A18 清空内容物，A17 保留内容物。已发布的其他原子可作为依赖，没有发布的 helper 不能调用。
+
+`configs/human300_capability_requirements.json` 登记 Human300 训练任务的静态需求，用于离线完整性审计；它不是运行计划，不注入模型请求，需求登记完整不等于实现或实测覆盖。不同目录版本的已学习代码不自动迁移，也不提供旧接口别名。
+
+## System prompt、感知与调度代码
+
+每次任务或 reset episode 创建仿真前，host 读取并校验能力目录。规划请求收到全部 32 项的能力族、职责、简述和路径；选中能力后，repair、distill、consolidate 收到该能力的完整 `description`，以及相关实现或草稿的 description 和源码。provider 没有任意文件读取工具，因此 host 实际注入内容，不只告知一个文件路径。
+
+代码响应必须包含非空 `description`，说明参数、单位、坐标系、前后条件和证据限制。P01/P02 可以用 NumPy 处理 `api.read_camera(camera)` 返回的当前 RGB、深度数组及标定；返回的是副本，没有隐藏语义标签或内置 VLM。模型在独立请求中接收图像，需要额外语义解释时由后续请求完成。
+
+P03 返回效果报告和历史更新；C01 返回分配结果；C02/C03 可通过 `api.call` 调用已发布技能并消费其返回值。当前步骤的输出也通过 `completed_steps[].execution.result` 进入下一次规划，再绑定到后续 `params`。依赖按版本和源码哈希锁定，避免 active 更新悄悄改变旧函数行为。host 始终负责 reset、总体预算、原生评分和发布，C03 只能执行有界调度。
+
+PandaOmron 的机器人约束是单臂、单夹爪、移动底盘和升降机构；持物时操作另一设备需要合法暂存或调整顺序。
+
+## 基础 API 与验证边界
+
+| API | 用途 |
 | --- | --- |
-| `observe()` | instruction、RGB 路径、深度 `.npy`、相机标定、机器人测量和剩余 horizon 信息 |
-| `step(action, repeat=1)` | `arm` 为 7 维绝对弧度；`torso` 为米；`gripper` 为 -1/0/+1；`base` 为机体坐标系 m/s、m/s、rad/s |
-| `move_joints(target, duration=2, part="arm", ...)` | 普通关节插值运动，`part` 可为 `arm` 或 `torso` |
-| `move_tcp(position, rotation=None, ...)` | 当前机器人基座坐标系中的米和 3×3 旋转矩阵；通用 IK，无物体语义控制器 |
-| `move_base(velocity, duration=.5)` | 有时限的机体坐标系底盘速度，结束后停止 |
-| `gripper(direction, duration=.5)` | -1 张开，+1 闭合；结束后保持原生夹爪预载 |
-| `wait(duration=.5)` | 保持控制参考，推进物理仿真 |
-| `deproject(camera, u, v, radius=1)` | RGB-D 像素反投影为当前机器人基座坐标中的三维点 |
-| `call("Pxx", params)` | 仅调用已声明、已发布并锁定版本的依赖 |
+| `observe()` | 当前 instruction、图像路径、标定、机器人测量、步数和 horizon |
+| `read_camera(camera)` | 当前相机的 RGB/米制深度数组和标定，不提供语义识别器 |
+| `deproject(camera, u, v, radius=1)` | RGB-D 像素反投影到当前机器人基座坐标系 |
+| `step(action, repeat=1)` | 原生低层动作：机械臂绝对关节角、升降、夹爪和底盘请求 |
+| `move_joints(...)` / `move_tcp(...)` | 通用关节插值和 IK 运动，无物体语义控制策略 |
+| `move_base(velocity, duration=.5)` | 有时限的原生归一化速度请求，随后停止；不是 m/s 或 rad/s |
+| `gripper(direction, duration=.5)` | -1 张开，+1 闭合 |
+| `wait(duration=.5)` | 保持控制参考并推进仿真 |
+| `call(skill_id, params)` | 调用已声明、已发布且锁定版本的 P/A/C 依赖 |
 
-完整签名以 `evo/runtime_api.py` 的 `API_DESCRIPTION` 为准。
-RGB 图像会真正作为模型图片输入；原始深度由 `deproject` 使用，不把 `.npy` 路径假装成模型看过的深度图。
-`semantic_catalog` 只给物体/设备标识、类别、别名及关节名，不给位姿或设备状态。
-底层借用现有 RoboEnv 的 RoboCasa backend 和原生 controller，不携带其 70 个高级 `rc` 操作技能；没有预置 pick/place/press/turn 策略。
+完整签名、坐标系和时序以 `evo/runtime_api.py` 的 `API_DESCRIPTION` 为准。底层使用 RoboEnv 的 RoboCasa backend 和原生 controller，不导入预置 pick/place/press/turn 高层技能。动作结束和函数返回不等于任务成功。
 
-## 后验条件与观测隔离
+host 独立验证物理效果，以及以下有限数据合同：
 
-每步格式为 `{id, atom, params, goal, postcondition, depends_on}`，依赖必须在前面或属于已完成前缀。
-`postcondition` 为 `{"predicate":"名称","args":{...}}`，只允许 host 已声明的谓词。
+| 谓词 | 能证明什么 | 不证明什么 |
+| --- | --- | --- |
+| `observed_result` | 所选输出字段与当前公开观测或深度投影一致 | 通用物体识别、未检查属性或完整几何正确 |
+| `effect_report` | P03 的布尔报告与独立局部条件一致，包括正确报告“未满足” | 对应物理条件已经达成 |
+| `assignment_valid` | 给定输入下的唯一性、配额、允许目的地和剩余集合满足要求 | 输入物体的视觉属性正确，或已实际搬运到位 |
 
-| 谓词 | 检查内容 |
-| --- | --- |
-| `native_success` | 原生任务完成，只能用于最后一步 |
-| `joint_near` / `tcp_near` | 机器人关节 / TCP 到达指定范围 |
-| `gripper_aperture` | 夹爪开度，不能据此声称已经抓牢物体 |
-| `object_grasped` | 原生双侧夹指接触；不等于持续稳定抓握 |
-| `object_in_receptacle` / `object_in_fixture` | 原生容器接触/包容或设备包容关系 |
-| `fixture_state` / `fixture_joint` | 已有设备布尔状态或归一化关节区间 |
+这些记录标记 `scope=declared_output_contract`。感知步骤不因没有运动就跳过，探索与回放使用同一验证实现。C02/C03 的物理效果仍需物理判据；不支持的条件返回 unknown。`native_success` 不能冒充复合任务中间步骤的验证，`object_grasped` 的接触判据不能独自证明持续稳定提起，`base_near` 不能独自证明操作可达。
 
-语义 oracle 只存在于 host 评估阶段。返回的 verdict/reason 可用于下一轮模型失败反馈；隐藏的物体位姿、设备几何与真实状态不进入 `api.observe()`，生成函数也没有 `evaluate()` 接口。
-未知设备字段或不支持的条件产生 `known=false`，不能记为成功。
-后验条件必须真的对应原子的目标；“手到达附近”不等于“抓取成功”，模型计划仍需要研究者审查这一语义关系。
+生成代码不能读取模拟器私有状态、直接访问评分器、任意读写文件或调用网络。代码可使用 `np`、`math` 和有限内置函数，参数应承载场景相关绑定，返回紧凑 JSON 字典。AST 检查和执行超时不是操作系统安全沙箱，需在受控研究 worker 中执行。
 
-## 安装与测试
+## 安装与运行
 
-Python ≥3.10。核心依赖 NumPy；真实仿真还需要 RoboCasa、robosuite、MuJoCo、RoboEnv 及其 `roboenv_runtime`，以及资产、SciPy、Pillow 和可用渲染环境。这些仿真运行时和第三方资产不随本仓库发布。安装 Python 包并不等于完成仿真环境安装。
+Python ≥3.10。框架核心依赖 NumPy；真实仿真还需兼容的 RoboCasa、robosuite、MuJoCo、RoboEnv、`roboenv_runtime`、资产和渲染依赖。以下安装不会安装完整仿真栈或第三方资产。
 
 ```bash
 git clone https://github.com/ymzzzz-damn/evo-harness.git
 cd evo-harness
 python3 -m pip install -e '.[test,control]'
 python3 -m pytest tests -q
-python3 -m evo.cli init --library ./library
+python3 -m evo.cli init --library ./library_pac32
 python3 -m evo.cli catalog
-```
-
-测试中的简单 toy plant 和诊断函数是测试夹具，不是已沉淀的机器人技能，也不代表 RoboCasa 成绩。
-
-## 运行任务
-
-```bash
 cp configs/robocasa.example.json configs/robocasa.local.json
-export OPENAI_API_KEY="YOUR_API_KEY"
-# 编辑 local 配置中的 agent.base_url、model 和任务列表。
-# 使用已安装 RoboCasa/RoboEnv 的 Python 环境执行：
-python3 -m evo.cli run --config configs/robocasa.local.json --output runs/task-001
 ```
 
-示例的 localhost 地址和 `YOUR_VISION_MODEL` 是占位配置，需要替换为实际支持图像输入的模型服务。密钥从 `api_key_env` 指定的环境变量读取，不写入配置或提交到仓库。运行输出目录必须不存在；技能库目录可以跨任务复用。
+示例使用本地兼容服务地址和 `YOUR_VISION_MODEL` 占位名称，需要修改 `configs/robocasa.local.json` 中的模型、endpoint、task、library 和 episode 预算。凭据通过 `agent.api_key_env` 指定的环境变量提供，不写入 JSON。相对路径以进程工作目录为基准；`use_existing_runtime_auth` 只适用于配置了专用 runtime 的集群 worker，普通运行不应依赖它。
 
-- `maintenance_trigger: "atomic"`：每个原子步骤成功立即维护。设为 `"episode"` 则每轮结束维护，包括失败轮。
-- `maintain_after_task: false`：关闭自动维护；也可用 `explore` 子命令仅收集经验。
-- `episode_retry.max_episodes: null`：同一 task 失败后持续 reset 重试；正整数限制 episode 数。每轮仍受原生 horizon、尝试次数和代码超时约束。
-- `tasks`：任务名称、seed、相机尺寸等适配器配置。修改示例即可运行多个任务。
-- `task_status` / `native_successes`：任务执行结果；`maintenance_status` / `promoted_versions` / `accepted_case_count`：技能发布与复用验收结果。
-
-独立维护、检查和回滚：
+仿真和模型服务就绪后执行：
 
 ```bash
-python3 -m evo.cli maintain --config configs/robocasa.local.json --output runs/maintain-001 --experience /path/to/pending/01_P10.json
-python3 -m evo.cli inspect --library ./library
-python3 -m evo.cli rollback --library ./library P10 1
+python3 -m evo.cli run --config configs/robocasa.local.json --output runs/local-001
+python3 -m evo.cli inspect --library ./library_pac32
+python3 -m evo.cli rollback --library ./library_pac32 A13 1
 ```
 
-`evaluate` 子命令接收包含 `library` 和 `evaluations` 的配置，每项 evaluation 含 `task` 和已绑定参数的 `plan`。它冻结库版本，不修复代码、不写回技能库；需要先自行生成并验证技能，本仓库不附带成功策略。
+`--output` 必须是尚不存在的新目录；同一 library 可被后续任务复用。rollback 仅在相应版本已存在时有效。`explore` 只运行探索，`maintain --experience <实际经验文件>` 可补做维护；强制结束进程后，已写入的原始记录保留，但参数化整理不会自动完成。
 
-## 源码布局
+每个 episode 内的修复共享物理状态，不会每次尝试都 reset。`episode_retry.max_episodes` 设为正整数可限制 episode 数；示例设为 `null`，表示对可重试失败持续 reset 直到成功或停止。每轮仍保留原生 horizon，并从新观测重新规划；上一轮完成的物理步骤不算新一轮已经完成。鉴权、模型传输或 backend 错误不会被无限 reset 掩盖。
 
-| 路径 | 用途 |
-| --- | --- |
-| `evo/catalog.py` | P01–P40 定义与空函数槽位 |
-| `evo/agent.py`、`evo/prompts.py` | 规划、修复、蒸馏与模型接口 |
-| `evo/loops.py` | 任务探索与独立回放维护 |
-| `evo/library.py` | 候选、正式案例、版本和依赖锁定 |
-| `evo/robocasa_adapter.py`、`evo/runtime_api.py` | 原生仿真适配与允许的控制接口 |
-| `evo/codecheck.py`、`evo/execution.py` | 代码契约检查和有时限的执行 |
-| `evo/cli.py` | 任务重试、即时维护和冻结评估入口 |
-| `scripts/` | 部署、并行运行、资源测量、任务目录生成、恢复与统计工具 |
-| `tests/` | 控制流、库事务、适配器及部署工具测试 |
-| `configs/robocasa.example.json` | 不含凭据或已学技能的配置模板 |
+## 评估、部署与产物
 
-`scripts/build_robocasa365_catalog.py` 可从实际安装的 RoboCasa 源码及其 manifest 构建任务目录；生成目录与 source manifest 不属于本次源码发布。
+`evaluate` 使用审查过的计划执行冻结技能，不调用模型修复或发布；`evaluate-policy` 提供独立的策略评估工作流。训练成功、单场景回放成功、数据合同通过和保留集泛化是不同指标，需分别报告。
 
-## P6000 部署脚本
+`scripts/` 提供任务并行、资源检查、回执收集、库恢复和评估衔接工具。P6000 launchers 是可选的集群适配，需要已有仿真 runtime、Job 模板、共享挂载、渲染环境和 Kubernetes 配置；它们不是通用仿真安装器，也不会因克隆仓库而自动具备运行条件。
 
-`scripts/launch_p6000.py`、`launch_parallel_p6000.py` 和 `launch_gpu_parallel_p6000.py` 保留当前部署工具源码。它们依赖已有集群环境、外部 `runtime/deployment/job_template.json`、RoboEnv 运行时、仿真镜像和资产；脚本中的默认项目路径、运行时路径、kubeconfig、namespace 及 Python 路径需要按自己的环境配置。仓库不包含这些机器配置、凭据、镜像或第三方运行时。
+运行时的 `runs/` 保存模型请求、观测、尝试、维护和汇总；库内保存不可变代码、版本、active 指针、案例、失败草稿和回放证据。这些生成物不随源码提交。Human300 需求表是静态任务需求，不包含已学习策略；完整 RoboCasa 任务目录可通过 `scripts/build_robocasa365_catalog.py` 在所用仿真源码上生成。
 
-launcher 为每次 run 冻结源码并记录哈希。GPU 并行入口先测量设备容量并保留利用率记录；单元测试不能替代真实环境下的资源与渲染验证。采集和统计脚本用于读取自行生成的运行目录，不依赖本仓库附带历史实验。
-
-## 发布边界
-
-`.gitignore` 排除技能库、生成的 `code_tools`、候选与经验记录、run 输出、observations/ 下的图像、深度/视频数据、日志、验证报告、仿真源码快照、缓存及本地凭据。整个实验专用 `scripts/kinex_eval50/` 不在本次发布范围内。开始新实验时，`init` 会生成空库；需要通过自己的探索和独立验证逐步积累能力。
-
-局部能力发布不代表整个任务成功，单个 task/seed 回放成功也不证明跨任务泛化。已成功任务的 continuation 可另行送入维护，建立更强的完整流程回归约束。
+测试验证框架控制流、依赖约束和验证行为；通过测试不代表真实 RoboCasa 任务成功率或泛化成绩。

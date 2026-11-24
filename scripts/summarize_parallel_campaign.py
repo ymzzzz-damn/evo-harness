@@ -22,6 +22,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from evo.catalog import get_spec
 from evo.codecheck import source_hash
 from evo.library import Library
+from evo.replay_evidence import validate_cached_result
+from evo.admission import validate_comparison
 
 
 TERMINAL_WORKERS = {"succeeded", "failed", "interrupted", "cancelled"}
@@ -223,12 +225,20 @@ def _tool_report(library_root, baseline_path, worker_roots, issues):
         validation = record.get("validation", {})
         cases = validation.get("cases", [])
         case_ids = [case.get("case_id") for case in cases]
-        if (validation.get("success") is not True or validation.get("validation_kind") != "fresh_environment_replay"
+        if validation.get("validation_kind") == "code_comparison":
+            validate_comparison(validation, atom, digest)
+            if record.get("case_ids"):
+                raise ValueError("Comparison admission cannot claim replay case coverage")
+        elif (validation.get("success") is not True or validation.get("validation_kind") != "fresh_environment_replay"
                 or validation.get("candidate_sha256") != digest or not cases
                 or len(set(case_ids)) != len(case_ids) or set(record.get("case_ids", [])) != set(case_ids)
                 or any(case.get("success") is not True for case in cases)
                 or any(state["cases"].get(identifier, {}).get("atom") != atom for identifier in case_ids)):
             raise ValueError("published record lacks successful validation coverage")
+        for case_result in cases:
+            if case_result.get("replay_evidence", {}).get("kind") == "cached_success":
+                validate_cached_result(library_root, state, state["cases"][case_result["case_id"]],
+                                       record, validation, case_result)
         for child, pin in record.get("dependencies", {}).items():
             validate(child, pin["version"], pin["sha256"], stack + (atom,))
         return source
@@ -258,6 +268,10 @@ def _tool_report(library_root, baseline_path, worker_roots, issues):
                     or len(ids) != len(set(ids)) or any(result.get("success") is not True for result in results)
                     or any(state["cases"].get(case_id, {}).get("atom") != atom for case_id in ids)):
                 raise ValueError("case activation lacks successful matching replay evidence")
+            for result in results:
+                if result.get("replay_evidence", {}).get("kind") == "cached_success":
+                    validate_cached_result(library_root, state, state["cases"][result["case_id"]],
+                                           state["versions"][atom][str(version)], evidence, result)
             item["validated"] = True
             if item["via_reuse"]:
                 proof = next(result for result in results if result["case_id"] == identifier)
@@ -286,6 +300,8 @@ def _tool_report(library_root, baseline_path, worker_roots, issues):
                      "parameter_contract": {"catalog_suggestions": spec["parameters"],
                          "note": "Scene bindings are runtime params; replay coverage lists the tested bindings."},
                      "validation_kind": record.get("validation", {}).get("validation_kind"),
+                     "replay_policy": record.get("validation", {}).get("replay_policy", "full_fresh"),
+                     "replay_counts": record.get("validation", {}).get("replay_counts"),
                      "coverage": [], "validated": False,
                      "source_path": str(library_root / "sources" / f"{record['sha256']}.py")}
             entry["from_this_campaign"] = _inside(entry["source_run"], worker_roots)
@@ -298,6 +314,7 @@ def _tool_report(library_root, baseline_path, worker_roots, issues):
                 case_id = case_result.get("case_id")
                 entry["coverage"].append({"case_id": case_id, "success": case_result.get("success"),
                     "evidence_origin": origin,
+                    "replay_origin": case_result.get("replay_evidence", {}).get("kind", "fresh"),
                     "native_success": case_result.get("native_success", case_result.get("native_task_success")),
                     "task_config": copy.deepcopy(case.get("task_config")),
                     "params": copy.deepcopy(case.get("step", {}).get("params", {})),
@@ -308,6 +325,7 @@ def _tool_report(library_root, baseline_path, worker_roots, issues):
                 if previous is not None and previous != record["sha256"]:
                     raise ValueError("published version hash changed relative to baseline")
                 entry["validated"] = True
+                entry["replay_verified"] = entry["validation_kind"] == "fresh_environment_replay"
             except (OSError, ValueError, KeyError, TypeError) as error:
                 entry["integrity_error"] = str(error)
                 issues.append({"path": entry["source_path"], "error": str(error)})
@@ -331,6 +349,10 @@ def _tool_report(library_root, baseline_path, worker_roots, issues):
         "candidate_statuses": dict(Counter(candidate.get("status", "unknown") for candidate in state["candidates"].values())),
         "failure_lessons": sum(len(entries) for entries in state["lessons"].values()),
         "formal_regression_cases": len(state["cases"]), "pending_cases": len(state.get("pending_cases", {})),
+        "comparison_admitted_versions": sum(e["validated"] and e["validation_kind"] == "code_comparison"
+                                            for e in report["published_versions"]),
+        "working_memory_records": sum(len(rows) for rows in state.get("working_memory_index", {}).values()),
+        "working_drafts": sum(row["kind"] == "draft" for rows in state.get("working_memory_index", {}).values() for row in rows),
         "case_activation_records": len(report["case_activations"]),
         "validated_case_activations": sum(item["validated"] for item in report["case_activations"]),
         "case_activation_integrity_errors": sum(not item["validated"] for item in report["case_activations"]),

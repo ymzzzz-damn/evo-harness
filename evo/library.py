@@ -1,7 +1,9 @@
 """Transactional, append-only source storage for validated atomic skills.
 
-Candidates never become active by being executed successfully once. A promotion
-requires a fresh validation report covering every registered case for the atom.
+First admission requires independent replay. Regression-mode promotion covers
+every formal case; an explicit comparison policy can update a nonempty atom
+without replay, with a distinct admission receipt and no claimed case coverage.
+Working drafts preserve incomplete work but are never active dependencies.
 Code is immutable and dependencies refer to exact version/hash pairs. The library
 is a local trusted-process registry; it does not authenticate validation workers.
 """
@@ -20,7 +22,7 @@ from pathlib import Path
 import tempfile
 import uuid
 
-from .catalog import CATALOG, get_spec, stub
+from .catalog import CATALOG, CATALOG_VERSION, get_spec, stub, validate_library_catalog
 from .codecheck import require_valid_code, source_hash
 
 
@@ -62,11 +64,15 @@ class Library:
         self.state_path = self.root / "state.json"
         self.backup_path = self.root / "state.backup.json"
         with self._locked():
+            catalog_path = self.root / "catalog.json"
+            if catalog_path.exists() and set(json.loads(catalog_path.read_text())) != set(CATALOG):
+                raise LibraryError("Incompatible catalog.json; use a separate Human300 P/A/C32 library")
             # Don't trust a cached negative directory lookup when another client
             # may have initialized the shared library while we waited for .lock.
             state = self._load(allow_missing=True)
             if state is None:
-                self._initialize({"schema_version": SCHEMA_VERSION, "active": {}, "versions": {},
+                self._initialize({"schema_version": SCHEMA_VERSION, "atomic_catalog_version": CATALOG_VERSION,
+                                  "active": {}, "versions": {},
                                   "candidates": {}, "cases": {}, "pending_cases": {}, "case_activations": {},
                                   "case_lifecycle_version": CASE_LIFECYCLE_VERSION, "lessons": {}, "events": []})
             elif state["schema_version"] != SCHEMA_VERSION:
@@ -74,11 +80,15 @@ class Library:
                     self._migrate_case_lifecycle(state)
                 else:
                     self._commit_schema_migration(state)
-            if not (self.root / "catalog.json").exists():
-                self._atomic_write(self.root / "catalog.json", _json(CATALOG))
+            if state is not None and state.get("atomic_catalog_version") is None:
+                # Only a completely empty unversioned registry passed the guard.
+                state["atomic_catalog_version"] = CATALOG_VERSION
+                self._save(state)
+            if not catalog_path.exists() or json.loads(catalog_path.read_text()) != CATALOG:
+                self._atomic_write(catalog_path, _json(CATALOG))
             for atom in CATALOG:
                 path = self.stubs_dir / f"{atom}.py"
-                if not path.exists():
+                if not path.exists() or path.read_text() != stub(atom):
                     self._atomic_write(path, stub(atom))
 
     @contextmanager
@@ -190,6 +200,10 @@ class Library:
             if digest != actual:
                 raise _StateIntegrityError("Library state checksum mismatch")
         # Schema 1 is read only for migration. All normal writers require v2.
+        try:
+            validate_library_catalog(state)
+        except ValueError as error:
+            raise LibraryError(str(error)) from error
         return state
 
     def _load(self, allow_missing: bool = False) -> dict | None:
@@ -301,6 +315,7 @@ class Library:
         result["code"] = self._source(record["sha256"])
         result["source"] = result["code"]
         result["source_path"] = str(self.sources_dir / f'{record["sha256"]}.py')
+        result["description"] = record.get("description") or record.get("metadata", {}).get("description") or get_spec(record["atom"])["description"]
         return result
 
     @staticmethod
@@ -371,6 +386,8 @@ class Library:
         metadata = _clone(metadata or {})
         if not isinstance(metadata, dict):
             raise LibraryError("metadata must be a dictionary")
+        if "description" in metadata and (not isinstance(metadata["description"], str) or not metadata["description"].strip()):
+            raise LibraryError("Implementation description must be a nonempty string")
         with self._locked():
             state = self._load()
             new_case_id = metadata.get("new_case_id")
@@ -428,8 +445,8 @@ class Library:
             return None
         return state["cases"].get(identifier) or state["pending_cases"].get(identifier)
 
-    @classmethod
-    def _validate_report_cases(cls, state: dict, atom: str, report: dict, digest: str) -> set[str]:
+    def _validate_report_cases(self, state: dict, atom: str, report: dict, digest: str,
+                               dependencies=None) -> set[str]:
         if type(report.get("success")) is not bool:
             raise LibraryError("validation report requires a boolean success")
         if report.get("candidate_sha256") != digest:
@@ -445,11 +462,31 @@ class Library:
             if identifier in seen:
                 raise LibraryError(f"Duplicate validation case: {identifier}")
             seen.add(identifier)
-            registered = cls._find_case(state, identifier)
+            registered = self._find_case(state, identifier)
             if registered is None or registered["atom"] != atom:
                 raise LibraryError(f"Validation case is not registered for {atom}: {identifier}")
             if identifier in state["pending_cases"] and report.get("validation_kind") != "fresh_environment_replay":
                 raise LibraryError("Pending cases require fresh_environment_replay evidence")
+            evidence = case.get("replay_evidence", {})
+            if not isinstance(evidence, dict):
+                raise LibraryError("Replay evidence must be a dictionary")
+            origin = evidence.get("kind", "fresh")
+            if origin not in ("fresh", "cached_success"):
+                raise LibraryError("Unknown replay evidence origin")
+            if origin == "cached_success":
+                from .replay_evidence import validate_cached_result
+                try:
+                    validate_cached_result(self.root, state, registered,
+                        {"atom": atom, "sha256": digest, "dependencies": dependencies or {}}, report, case)
+                except (OSError, ValueError, KeyError, TypeError) as error:
+                    raise LibraryError(f"Invalid cached replay evidence: {error}") from error
+        if "replay_policy" in report:
+            from .replay_evidence import POLICY
+            cached = sum(c.get("replay_evidence", {}).get("kind") == "cached_success" for c in cases)
+            if (report["replay_policy"] != POLICY or report.get("validation_kind") != "fresh_environment_replay"
+                    or any(c.get("replay_evidence", {}).get("kind") not in ("fresh", "cached_success") for c in cases)
+                    or report.get("replay_counts") != {"total": len(cases), "fresh": len(cases) - cached, "cached": cached}):
+                raise LibraryError("Replay policy/counts must identify actual fresh and cached evidence")
         return {case["case_id"] for case in cases if case["success"] is True}
 
     def record_validation(self, candidate_id: str, report: dict) -> dict:
@@ -463,7 +500,7 @@ class Library:
             candidate = state["candidates"][candidate_id]
             if candidate["status"] == "promoted":
                 raise LibraryError("A promoted candidate is immutable; propose a new candidate")
-            self._validate_report_cases(state, candidate["atom"], report, candidate["sha256"])
+            self._validate_report_cases(state, candidate["atom"], report, candidate["sha256"], candidate["dependencies"])
             cases = report["cases"]
             report["recorded_at"] = _now()
             candidate["validations"].append(report)
@@ -495,7 +532,7 @@ class Library:
             required = {identifier for identifier, case in state["cases"].items() if case["atom"] == atom}
             if candidate["metadata"].get("new_case_id") is not None:
                 required.add(candidate["metadata"]["new_case_id"])
-            passed = self._validate_report_cases(state, atom, report, candidate["sha256"])
+            passed = self._validate_report_cases(state, atom, report, candidate["sha256"], candidate["dependencies"])
             if not passed or not required.issubset(passed):
                 raise LibraryError(f"Missing successful regression coverage: {sorted(required - passed) or ['at least one registered case']}")
             if any(case["success"] is not True for case in report["cases"]):
@@ -544,6 +581,110 @@ class Library:
                 self._save(state)
         return identifier
 
+    def remember(self, atom: str, payload: dict, kind="attempt") -> dict:
+        """Append durable per-atom learning memory, including unsuccessful code.
+
+        This does not publish a callable, activate a case, or establish success.
+        Large observations/traces live outside the transactional registry state.
+        """
+        get_spec(atom)
+        if kind not in {"attempt", "draft"}:
+            raise LibraryError("Memory kind must be attempt or draft")
+        payload = _clone(payload)
+        identifier = "memory-" + hashlib.sha256(_json([atom, kind, payload]).encode()).hexdigest()[:24]
+        from .admission import host_success
+        status = "observed_success" if kind == "attempt" and host_success(payload.get("record", {})) else "incomplete"
+        item = dict(id=identifier, atom=atom, kind=kind, status=status, payload=payload, created_at=_now())
+        path = self.root / "working_memory" / atom / (identifier + ".json")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with self._locked():
+            state = self._load()
+            index = state.setdefault("working_memory_index", {}).setdefault(atom, [])
+            if not any(row["id"] == identifier for row in index):
+                self._atomic_write(path, _json(item))
+                index.append({k: item[k] for k in ("id", "atom", "kind", "status", "created_at")})
+                index[-1]["task"] = payload.get("task_config", {}).get("task")
+                index[-1]["goal"] = payload.get("step", {}).get("goal")
+                self._save(state)
+            else:
+                item = json.loads(path.read_text())
+        return item
+
+    def memory(self, atom: str, identifier: str) -> dict:
+        get_spec(atom)
+        with self._locked():
+            if not any(row["id"] == identifier for row in self._load().get("working_memory_index", {}).get(atom, [])):
+                raise LibraryError("Unknown working memory")
+            return json.loads((self.root / "working_memory" / atom / (identifier + ".json")).read_text())
+
+    def working_memory(self, atom: str, limit=8, task=None) -> list[dict]:
+        get_spec(atom)
+        if type(limit) is not int or limit < 1:
+            raise LibraryError("Working memory limit must be positive")
+        with self._locked():
+            rows = self._load().get("working_memory_index", {}).get(atom, [])
+            ranked = sorted(enumerate(rows), key=lambda pair: (pair[1].get("task") == task, pair[0]), reverse=True)
+            return [json.loads((self.root / "working_memory" / atom / (row["id"] + ".json")).read_text())
+                    for _, row in ranked[:limit]]
+
+    def working_catalog(self) -> list[dict]:
+        with self._locked():
+            return [copy.deepcopy(rows[-1]) for _, rows in sorted(
+                self._load().get("working_memory_index", {}).items()) if rows]
+
+    def publish_comparison(self, candidate_id: str, memory_id: str, rationale: str) -> dict:
+        """Update a nonempty atom by comparison, with explicitly weaker evidence.
+
+        A successful *source attempt* is required; the parameterized candidate is
+        not claimed to have executed. Partial implementations remain drafts.
+        """
+        from .admission import code_diff, host_success, same_program, validate_comparison
+        with self._locked():
+            state = self._load()
+            candidate = state["candidates"][candidate_id]
+            atom = candidate["atom"]
+            revision = state.get("activation_revisions", {}).get(atom, 0)
+            if (candidate.get("base_version") is None or state["active"].get(atom) != candidate["base_version"]
+                    or candidate.get("base_activation_revision", 0) != revision):
+                raise LibraryError("Comparison requires the unchanged nonempty active version")
+            base = self._version(state, atom, candidate["base_version"])
+            if candidate["status"] == "promoted":
+                raise LibraryError("A promoted candidate cannot be compared again")
+            rows = state.get("working_memory_index", {}).get(atom, [])
+            if not any(row["id"] == memory_id for row in rows):
+                raise LibraryError("Comparison requires recorded host experience")
+            memory = json.loads((self.root / "working_memory" / atom / (memory_id + ".json")).read_text())
+            observed = memory["payload"].get("record", {})
+            if memory["kind"] != "attempt" or not host_success(observed):
+                raise LibraryError("Incomplete code cannot replace a published implementation")
+            if source_hash(observed["code"]) != observed["sha256"] or observed["step"]["atom"] != atom:
+                raise LibraryError("Source experience code/atom mismatch")
+            old, new = self._hydrate(base), self._hydrate(candidate)
+            if same_program(old, new):
+                raise LibraryError("Equivalent code and pins do not require a new version")
+            self._check_graph(state, candidate["dependencies"], atom)
+            proof = dict(validation_kind="code_comparison", success=True, candidate_sha256=candidate["sha256"],
+                decision="update", rationale=rationale, replay_verified=False, regression_verified=False, cases=[],
+                base={k: base[k] for k in ("atom", "version", "sha256")},
+                source_evidence=dict(atom=atom, memory_id=memory_id, host_success=True,
+                    sha256=observed["sha256"], source_run=memory["payload"].get("source_run")),
+                code_diff=code_diff(old["code"], new["code"]), recorded_at=_now())
+            validate_comparison(proof, atom, candidate["sha256"])
+            versions = state["versions"].setdefault(atom, {})
+            version = max((int(v) for v in versions), default=0) + 1
+            record = {"atom": atom, "version": version, "sha256": candidate["sha256"],
+                      "dependencies": copy.deepcopy(candidate["dependencies"]),
+                      "metadata": copy.deepcopy(candidate["metadata"]), "candidate_id": candidate_id,
+                      "created_at": _now(), "validation": proof, "case_ids": []}
+            versions[str(version)] = record
+            state["active"][atom] = version
+            state.setdefault("activation_revisions", {})[atom] = revision + 1
+            candidate.update(status="promoted", version=version)
+            candidate["validations"].append(proof)
+            state["events"].append(dict(event="publish_comparison", atom=atom, version=version, at=_now()))
+            self._save(state)
+            return self._hydrate(record)
+
     def register_case(self, case: dict) -> str:
         """Compatibility alias: registration now stages; it never admits a case."""
         return self.stage_case(case)
@@ -582,7 +723,7 @@ class Library:
                 raise LibraryError("Case is not registered for the active atom")
             if validation.get("validation_kind") != "fresh_environment_replay":
                 raise LibraryError("Case admission requires fresh_environment_replay evidence")
-            passed = self._validate_report_cases(state, atom, validation, record["sha256"])
+            passed = self._validate_report_cases(state, atom, validation, record["sha256"], record["dependencies"])
             required = {identifier for identifier, value in state["cases"].items() if value["atom"] == atom} | {case_id}
             if (validation["success"] is not True or not required.issubset(passed)
                     or any(result["success"] is not True for result in validation["cases"])):

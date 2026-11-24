@@ -9,8 +9,13 @@ Integration::
 
 ``context`` is a JSON object supplied by the runner. It normally includes
 instruction, initial_observation, observation, api_catalog, supported_predicates,
-published_skills, budgets and attempt feedback. For suffix replanning set
-phase="replan" and completed_steps=[{"id": ...}, ...]. Each observation may have
+published_skills, budgets and attempt feedback. Plans may return an optional
+plan_complete boolean: false marks a verifiable prefix needing continuation;
+true is a planning expectation, never a host success verdict. Legacy responses
+omitting it remain valid. For suffix replanning set phase="replan"; after a
+verified prefix set phase="continue_after_verified_prefix". Both use current
+observation, refreshed library and completed_steps=[{"id": ...}, ...] from this
+episode only, whose IDs remain available as dependencies. Each observation may have
 images=[{"path": "/absolute/camera.png", "camera": "agentview", "modality": "rgb"}].
 Depth arrays remain public sensor artifacts for api.deproject; attach a PNG depth
 preview to let a vision model inspect depth visually.
@@ -51,7 +56,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 import uuid
 
 from .prompts import (ATOM_NAMES, CANDIDATE_SCHEMA, DISTILL_REBIND_SCHEMA, PLAN_SCHEMA,
-                      REPAIR_SCHEMA, instructions)
+                      REPAIR_SCHEMA, CONSOLIDATE_SCHEMA, FAILURE_CONSOLIDATE_SCHEMA, instructions)
 
 
 class AgentError(RuntimeError):
@@ -127,13 +132,25 @@ def _completed_ids(context):
 
 
 def validate_plan(response: dict, context: dict | None = None) -> dict:
-    """Check topological order and host predicate names without scoring a task."""
+    """Validate a full plan or verifiable prefix without deciding task success.
+
+    Optional ``plan_complete`` is preserved, not defaulted for legacy responses.
+    Explicitly unfinished prefixes cannot use the whole-task native scorer as
+    the postcondition of a locally completed atom.
+    """
     context = {} if context is None else context
-    if set(response) != {"steps", "reasoning"} or not isinstance(response["reasoning"], str):
-        raise ResponseError("plan requires only steps and reasoning")
+    required_fields = {"steps", "reasoning"}
+    if (not required_fields <= set(response)
+            or not set(response) <= required_fields | {"plan_complete"}
+            or not isinstance(response["reasoning"], str)):
+        raise ResponseError("plan requires steps and reasoning, with optional plan_complete")
+    if "plan_complete" in response and type(response["plan_complete"]) is not bool:
+        raise ResponseError("plan_complete must be a boolean when provided")
     steps = response["steps"]
     if not isinstance(steps, list) or len(steps) > 100:
         raise ResponseError("plan steps must be a list of at most 100 steps")
+    if context.get("plan_one_step") and len(steps) > 1:
+        raise ResponseError("This run requests exactly one next atom; plan remaining work after its verification")
     seen = _completed_ids(context)
     supported = context.get("supported_predicates")
     if isinstance(supported, dict):
@@ -150,7 +167,7 @@ def validate_plan(response: dict, context: dict | None = None) -> dict:
                 or len(step["id"]) > 128 or step["id"] in seen):
             raise ResponseError("step IDs must be nonempty and cannot repeat a completed step")
         if not isinstance(step["atom"], str) or step["atom"] not in ATOM_NAMES:
-            raise ResponseError("step atom must be one of P01..P40")
+            raise ResponseError("step atom must be one of P01..P03, A01..A26 or C01..C03")
         if not isinstance(step["params"], dict) or not isinstance(step["goal"], str) or not step["goal"].strip():
             raise ResponseError("step params must be an object and goal must be nonempty")
         if not _strings(step["depends_on"]) or not set(step["depends_on"]) <= seen:
@@ -165,6 +182,8 @@ def validate_plan(response: dict, context: dict | None = None) -> dict:
             raise ResponseError("postcondition is not supported by the host verifier")
         if predicate == "native_success" and index != len(steps) - 1:
             raise ResponseError("native_success can verify only the final step")
+        if predicate == "native_success" and response.get("plan_complete") is False:
+            raise ResponseError("an unfinished prefix cannot use native_success as local verification")
         seen.add(step["id"])
     try:
         return _copy(response)
@@ -172,16 +191,20 @@ def validate_plan(response: dict, context: dict | None = None) -> dict:
         raise ResponseError("plan must be finite JSON data") from None
 
 
-def validate_candidate(response: dict, *, allow_params=False) -> dict:
+def validate_candidate(response: dict, *, allow_params=False, require_description=False) -> dict:
     """Check shape/signature and host-authorized complete runtime bindings.
 
     The host still audits the code body. ``allow_params`` must only be enabled
     for repair or a new pending case, never immutable established cases.
     """
     required = {"code", "rationale", "dependencies"}
-    allowed = required | ({"params"} if allow_params else set())
+    if require_description:
+        required.add("description")
+    allowed = required | {"description"} | ({"params"} if allow_params else set())
+    if "description" in response and (not isinstance(response["description"], str) or not response["description"].strip()):
+        raise ResponseError("description must document the function with a nonempty string")
     if not required <= set(response) or not set(response) <= allowed:
-        raise ResponseError("candidate requires code, rationale and dependencies; optional params require host authorization")
+        raise ResponseError("candidate requires code, rationale, dependencies and a description when requested; optional params require host authorization")
     if "params" in response and not isinstance(response["params"], dict):
         raise ResponseError("repair params must be a complete JSON object")
     if (not isinstance(response["code"], str) or not response["code"].strip()
@@ -281,6 +304,36 @@ def _numeric_usage(value):
     return None
 
 
+def validate_consolidation(response, context):
+    required = {"code", "rationale", "dependencies", "params", "decision", "progress"}
+    if context.get("source_success") is not True:
+        if response.get("decision") != "draft":
+            raise ResponseError("Unsuccessful experience can only produce a draft")
+        required.add("failure_analysis")
+    if context.get("require_skill_description") or "description" in response:
+        required.add("description")
+    if set(response) != required or response.get("decision") not in {"keep", "update", "draft"}:
+        raise ResponseError("consolidate requires " + ", ".join(sorted(required)))
+    validate_candidate({k: response[k] for k in ("code", "rationale", "dependencies", "params", "description") if k in response},
+                       allow_params=True, require_description=context.get("require_skill_description", False))
+    progress = response["progress"]
+    if (not isinstance(progress, dict) or set(progress) != {"completed", "remaining", "entry_requirements"}
+            or any(not isinstance(v, list) or any(not isinstance(s, str) or not s.strip() for s in v)
+                   for v in progress.values())):
+        raise ResponseError("progress requires completed/remaining/entry_requirements string lists")
+    if "failure_analysis" in required:
+        analysis = response["failure_analysis"]
+        if (not isinstance(analysis, dict) or set(analysis) != {"summary", "hypotheses", "next_changes"}
+                or not isinstance(analysis["summary"], str) or not analysis["summary"].strip()
+                or any(not isinstance(analysis[k], list)
+                       or any(not isinstance(s, str) or not s.strip() for s in analysis[k])
+                       for k in ("hypotheses", "next_changes"))):
+            raise ResponseError("failure_analysis requires a nonempty summary and hypotheses/next_changes string lists")
+    if response["decision"] == "update" and not context.get("active"):
+        raise ResponseError("An empty capability must pass first-use replay")
+    return _copy(response)
+
+
 class Agent:
     """Stage contracts plus optional complete request/response run artifacts.
 
@@ -307,6 +360,9 @@ class Agent:
     def distill(self, context: dict) -> dict:
         return self._request("distill", context)
 
+    def consolidate(self, context: dict) -> dict:
+        return self._request("consolidate", context)
+
     def _request(self, stage: str, context: dict) -> dict:
         if not isinstance(context, dict):
             raise ValueError("agent context must be a JSON object")
@@ -314,10 +370,24 @@ class Agent:
         allow_params = stage == "repair" or (stage == "distill" and
             context.get("allow_pending_case_rebind") is True and isinstance(context.get("pending_case"), dict))
         schema = {"plan": PLAN_SCHEMA, "repair": REPAIR_SCHEMA,
-                  "distill": DISTILL_REBIND_SCHEMA if allow_params else CANDIDATE_SCHEMA}[stage]
+                  "distill": DISTILL_REBIND_SCHEMA if allow_params else CANDIDATE_SCHEMA,
+                  "consolidate": (CONSOLIDATE_SCHEMA if context.get("source_success") is True
+                                  else FAILURE_CONSOLIDATE_SCHEMA)}[stage]
+        if stage != "plan" and context.get("require_skill_description"):
+            schema = _copy(schema)
+            schema["required"].append("description")
         request = {"stage": stage, "instructions": instructions(stage), "context": context,
                    "response_schema": schema,
                    "attached_images": _attached_images(context, self.max_images)}
+        if context.get("plan_one_step"):
+            request["instructions"] += "\nPlan only ONE next atom from the instruction and current observation; do not return a multi-step prefix."
+        if context.get("record_working_memory"):
+            request["instructions"] += ("\nworking_memory includes parameterized failed functions, raw attempts and their failure feedback, not current physical progress. "
+                "Repair the previous parameterized function using failure_feedback, failure_analysis and current observations. "
+                "Bind its parameters to the new scene and restore prerequisites; never copy old scene bindings blindly. "
+                "horizon_exhausted means the action budget ended before this atom succeeded, not proof the whole approach is invalid. "
+                "Successful and failed implementations are parameterized at the episode boundary. "
+                "Failed drafts and model cause hypotheses are unverified repair input, never published api.call targets.")
         directory = None
         if self.log_dir is not None:
             directory = self.log_dir / (stage + "_" + uuid.uuid4().hex[:16])
@@ -342,7 +412,9 @@ class Agent:
                 if directory:
                     _write(directory / f"response_{attempt}.json", response)
                 result = (validate_plan(response, context) if stage == "plan" else
-                          validate_candidate(response, allow_params=allow_params))
+                          validate_consolidation(response, context) if stage == "consolidate" else
+                          validate_candidate(response, allow_params=allow_params,
+                                             require_description=context.get("require_skill_description", False)))
                 metadata["status"] = "completed"
                 if directory:
                     _write(directory / "response.json", result)

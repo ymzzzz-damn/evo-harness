@@ -12,8 +12,13 @@ if provider.get("use_existing_runtime_auth"):
     secret = json.loads(source.read_text())["physical-rsi"]["key"]
     os.environ[provider.get("api_key_env", "OPENAI_API_KEY")] = secret
     del secret
-report = (evaluate_frozen(config, root/"evaluation") if config.get("mode") == "evaluate"
-          else run_config(config, root/"campaign"))
+if config.get("mode") == "evaluate_policy":
+    from evo.policy_evaluation import run_policy_evaluation
+    report = run_policy_evaluation(config, root/"campaign")
+elif config.get("mode") == "evaluate":
+    report = evaluate_frozen(config, root/"evaluation")
+else:
+    report = run_config(config, root/"campaign")
 summary = {key:report[key] for key in ("status", "task_status", "maintenance_status", "maintenance_trigger",
     "native_successes", "program_successes", "total_tasks", "total_episode_attempts",
     "promoted_versions", "accepted_case_count", "library_after", "library_unchanged") if key in report}

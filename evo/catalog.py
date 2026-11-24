@@ -7,84 +7,104 @@ Argument values are scene bindings supplied by a planner, never baked into code.
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
+from pathlib import Path
 
 
-_ROWS = [
-    ("P01", "pick", "抓取拿起", "pick_place", ("object",)),
-    ("P02", "place", "放置释放", "pick_place", ("object", "target")),
-    ("P03", "hold", "持续固定支撑", "pick_place", ("object",)),
-    ("P04", "reorient", "物体调姿", "reorient", ("object", "orientation")),
-    ("P05", "slide", "推移物体", "reorient", ("object", "target")),
-    ("P06", "handover", "双臂交接", "reorient", ("object", "target")),
-    ("P07", "articulate", "沿铰链/滑轨/盖机构开合或收折", "articulate", ("object", "target")),
-    ("P08", "turn_knob", "旋转控制旋钮", "controls", ("object", "target")),
-    ("P09", "turn_lever", "拨动杆件", "controls", ("object", "target")),
-    ("P10", "press_button", "按压按钮", "controls", ("object",)),
-    ("P11", "press_flatten", "压平或压合", "controls", ("object",)),
-    ("P12", "screw", "旋拧螺纹件", "fasten", ("object", "target")),
-    ("P13", "latch", "扣合或解开卡扣", "fasten", ("object", "target")),
-    ("P14", "insert", "约束插入或就位", "insertion", ("object", "target")),
-    ("P15", "extract", "从约束中取出或拆离", "insertion", ("object",)),
-    ("P16", "pour", "倾倒转移内容物", "material", ("object", "target")),
-    ("P17", "scoop", "舀取、铲取或捞取", "material", ("object", "target")),
-    ("P18", "dip", "蘸取或润湿工具", "material", ("object", "target")),
-    ("P19", "dispense", "挤出或喷洒物料", "material", ("object", "target")),
-    ("P20", "drain", "沥水过滤", "material", ("object", "target")),
-    ("P21", "stir", "容器内搅拌", "material", ("object", "target")),
-    ("P22", "shake", "抖动或晃动", "material", ("object",)),
-    ("P23", "wipe", "布类接触擦拭", "surface", ("object", "target")),
-    ("P24", "brush", "刷涂或刷洗", "surface", ("object", "target")),
-    ("P25", "squeegee", "刮拭集水", "surface", ("object", "target")),
-    ("P26", "sweep", "扫拢收集", "surface", ("object", "target")),
-    ("P27", "vacuum", "吸取表面碎屑", "surface", ("object", "target")),
-    ("P28", "coat", "铺涂或摊开材料", "surface", ("object", "target")),
-    ("P29", "cut", "工具切割", "surface", ("object", "target")),
-    ("P30", "flip_with_tool", "借工具翻面", "reorient", ("object", "target")),
-    ("P31", "scan", "持工具扫码", "surface", ("object", "target")),
-    ("P32", "unfold", "展开铺平", "deformable", ("object",)),
-    ("P33", "fold", "沿折线折叠", "deformable", ("object", "target")),
-    ("P34", "roll", "卷起柔性物", "deformable", ("object",)),
-    ("P35", "stretch", "撑开柔性开口", "deformable", ("object",)),
-    ("P36", "invert", "内外翻转", "deformable", ("object",)),
-    ("P37", "fit_cover", "袋口套装", "deformable", ("object", "target")),
-    ("P38", "tear", "沿边界撕离", "deformable", ("object", "target")),
-    ("P39", "attach", "贴附标签", "deformable", ("object", "target")),
-    ("P40", "navigate", "移动底盘到达目标位", "navigation", ("target",)),
-]
+CATALOG_PATH = Path(__file__).with_name("atomic_skills.json").resolve()
 
 
-CATALOG = {
-    atom: {
-        "id": atom,
-        "name": name,
-        "description": description,
-        "family": family,
-        "parameters": {key: {"required": False, "recommended": True, "description": "Suggested runtime scene binding"} for key in parameters},
-        "entrypoint": "skill(api, params) -> dict",
-        "implemented": False,
-    }
-    for atom, name, description, family, parameters in _ROWS
-}
+def _read_document():
+    raw = CATALOG_PATH.read_bytes()
+    document = json.loads(raw)
+    skills = document["skills"]
+    expected = {f"{prefix}{i:02d}" for prefix, count in (("P", 3), ("A", 26), ("C", 3))
+                for i in range(1, count + 1)}
+    if (document["version"] != "robocasa-human300-pac32-v1"
+            or set(skills) != expected
+            or len(document["families"]) != 13
+            or any(spec["id"] != atom or spec["family"] not in document["families"]
+                   or spec["layer"] != {"P": "perception", "A": "action", "C": "coordination"}[atom[0]]
+                   or spec["execution_mode"] != "learned_code"
+                   or not spec["description"].strip() for atom, spec in skills.items())):
+        raise ValueError("Invalid RoboCasa Human300 P/A/C32 catalog")
+    return document, hashlib.sha256(raw).hexdigest()
+
+
+_DOCUMENT, CATALOG_SHA256 = _read_document()
+CATALOG_VERSION = _DOCUMENT["version"]
+CATALOG = _DOCUMENT["skills"]
+PERCEPTION_CATALOG = {atom: spec for atom, spec in CATALOG.items() if spec["layer"] == "perception"}
+ACTION_CATALOG = {atom: spec for atom, spec in CATALOG.items() if spec["layer"] == "action"}
+COORDINATION_CATALOG = {atom: spec for atom, spec in CATALOG.items() if spec["layer"] == "coordination"}
+
+
+def task_catalog(library):
+    """Read the source before each task; deliver its overview, not just a path.
+
+    Providers cannot read local files. Details are supplied on demand by the
+    host; a changed file requires restarting so schemas and contracts agree.
+    """
+    document, digest = _read_document()
+    if digest != CATALOG_SHA256:
+        raise ValueError("Atomic catalog changed during this process; restart the runner")
+    overview = {atom: {key: spec[key] for key in ("id", "name", "family", "layer", "summary", "entrypoint", "execution_mode", "execution_owner")}
+                for atom, spec in document["skills"].items()}
+    for atom, spec in overview.items():
+        spec["stub_path"] = str(library.root / "stubs" / f"{atom}.py")
+    return {"atomic_catalog": overview,
+        "robot_contract": copy.deepcopy(document["robot_contract"]), "catalog_document": {
+        "source_path": str(CATALOG_PATH), "sha256": digest,
+        "version": CATALOG_VERSION, "loaded_by_host": True,
+        "families": document["families"], "provenance": document["provenance"],
+        "executable_atoms": list(CATALOG), "library_catalog_path": str(library.root / "catalog.json"),
+        "implementation_directory": str(library.root / "sources"),
+        "reading_order": "Read all 32 atomic_catalog interfaces and robot_contract before planning. P, A and C all generate executable code. For the selected atom read atomic_skill.description, then implementation description/code and failure feedback."}}
+
+
+def skill_context(library, atom):
+    """Detailed contract and real source locations for only the selected atom."""
+    return {"atomic_skill": {**get_spec(atom),
+        "catalog_path": str(CATALOG_PATH),
+        "stub_path": str(library.root / "stubs" / f"{atom}.py"),
+        "implementation": library.active(atom)}, "require_skill_description": True}
+
+
+def validate_library_catalog(state):
+    """Reject foreign taxonomies without relabeling or rewriting their code."""
+    version = state.get("atomic_catalog_version")
+    if version is not None and version != CATALOG_VERSION:
+        raise ValueError("Incompatible atomic catalog; use a separate Human300 P/A/C32 library")
+    atoms = set()
+    for key in ("active", "versions", "lessons", "working_memory_index"):
+        atoms.update(state.get(key, {}))
+    records = [r for versions in state.get("versions", {}).values() for r in versions.values()]
+    for key in ("candidates", "cases", "pending_cases"):
+        records.extend(state.get(key, {}).values())
+    for record in records:
+        if record.get("atom"):
+            atoms.add(record["atom"])
+        atoms.update(record.get("dependencies", {}))
+    if atoms - set(CATALOG) or (atoms and version is None):
+        raise ValueError("Incompatible or unversioned atomic catalog; use the current P/A/C32 namespace")
 
 
 def get_spec(atom: str) -> dict:
     """Return an isolated copy; unknown atomic IDs are always rejected."""
     if atom not in CATALOG:
-        raise ValueError(f"Unknown atomic skill: {atom!r}; expected P01 through P40")
+        raise ValueError(f"Unknown atomic skill: {atom!r}; expected P01..P03, A01..A26 or C01..C03")
     return copy.deepcopy(CATALOG[atom])
 
 
 def stub(atom: str) -> str:
     """Return an explicitly empty function, never a hand-authored policy."""
     spec = get_spec(atom)
-    return (
-        "def skill(api, params):\n"
-        f'    """{atom}: {spec["name"]} — {spec["description"]}.\n\n'
-        f'    Bindings: {", ".join(spec["parameters"])}.\n'
-        '    Implement using only the primitive API and validated dependencies.\n'
-        '    """\n'
-        f'    raise NotImplementedError("{atom} has not been learned")\n'
-    )
+    description = spec["description"] + "\nImplement using only the primitive API and published dependencies."
+    return ("def skill(api, params):\n"
+            + "    " + repr(description) + "\n"
+            + f'    raise NotImplementedError("{atom} has not been learned")\n')
+
 
 
 def validate_params(atom: str, params: dict, strict: bool = False) -> None:

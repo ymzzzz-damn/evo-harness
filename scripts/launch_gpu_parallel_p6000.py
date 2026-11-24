@@ -28,7 +28,7 @@ def history_task(path):
 
 def prepare(config_path, name, project, runtime, *, deadline=0, preflight=False,
             cpu_request="64", cpu_limit="128", memory_request="192Gi", memory_limit="384Gi",
-            max_parallel=None):
+            max_parallel=None, source_root=None):
     if not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,44}[a-z0-9])?", name):
         raise ValueError("name must be a lowercase Kubernetes name of at most 46 characters")
     if deadline < 0:
@@ -53,9 +53,17 @@ def prepare(config_path, name, project, runtime, *, deadline=0, preflight=False,
             raise ValueError("Capacity planning requires at least eight slots")
         capacity.update(host_memory_budget_mib=memory_mib(memory_request),
                         host_memory_limit_mib=memory_mib(memory_limit), cpu_limit=float(cpu_limit))
+    mode = config.get("mode", "run")
+    handoff = config.get("evaluation_handoff")
+    if handoff is not None:
+        if (mode != "run" or not isinstance(handoff, dict)
+                or not isinstance(handoff.get("template"), str)
+                or not Path(handoff["template"]).is_absolute()
+                or not isinstance(handoff.get("name"), str)):
+            raise ValueError("evaluation_handoff requires a run configuration, absolute template path, and evaluation name")
     tasks = config.get("tasks") or ([config["task"]] if "task" in config else [])
-    if config.get("mode", "run") != "run" or not isinstance(tasks, list) or not tasks:
-        raise ValueError("source must be a run configuration with a nonempty task list")
+    if mode not in {"run", "evaluate_policy"} or not isinstance(tasks, list) or not tasks:
+        raise ValueError("source must be a run/evaluate_policy configuration with a nonempty task list")
     if any(not isinstance(task, dict) or not isinstance(task.get("task"), str) or not task["task"] for task in tasks):
         raise ValueError("each task must have a task name")
     library = config.get("library", str(project / "library"))
@@ -68,16 +76,17 @@ def prepare(config_path, name, project, runtime, *, deadline=0, preflight=False,
         raise ValueError("retry_experiences must be a directory or list of directories")
     previous_tasks = [history_task(path) for path in histories]
     job = json.loads((runtime / "deployment/job_template.json").read_text())
-    for path in (project / "evo", project / "scripts", project / "pyproject.toml"):
+    source_root = Path(source_root).expanduser().resolve() if source_root is not None else project
+    for path in (source_root / "evo", source_root / "scripts", source_root / "pyproject.toml"):
         if not path.exists():
             raise ValueError(f"Missing source input: {path}")
     run = project / "runs" / name
     run.mkdir(parents=True, exist_ok=False)
     snapshot = run / "source"
     for directory in ("evo", "scripts"):
-        shutil.copytree(project / directory, snapshot / directory,
+        shutil.copytree(source_root / directory, snapshot / directory,
                         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
-    shutil.copy(project / "pyproject.toml", snapshot / "pyproject.toml")
+    shutil.copy(source_root / "pyproject.toml", snapshot / "pyproject.toml")
     hashes = {str(path.relative_to(snapshot)): hashlib.sha256(path.read_bytes()).hexdigest()
               for path in sorted(snapshot.rglob("*")) if path.is_file()}
     write(run / "source_sha256.json", hashes)
@@ -96,11 +105,13 @@ def prepare(config_path, name, project, runtime, *, deadline=0, preflight=False,
                         "run": str(directory), "config": str(directory / "config.json"),
                         "log": str(directory / "worker.log")})
     plan = {"name": name, "job": "yumuzhen-" + name, "run": str(run), "source": str(snapshot),
+            "mode": mode, "source_origin": str(source_root),
+            "evaluation_handoff": copy.deepcopy(handoff),
             "source_config": str(config_path), "created_at_utc": datetime.now(timezone.utc).isoformat(),
             "shared_library": library, "gpu_requested": 8, "preflight": preflight,
             "max_parallel": max_parallel,
             "gpu_assignment_policy": "A free dispatch slot selects slot_index % 8; workers[].gpu_slot is an initial hint only. Actual assignments are recorded in task_receipt.json and gpu_assignment.json.",
-            "completion_mode": "all_attempted" if config.get("episode_retry", {}).get("max_episodes") == 1 else "all_success",
+            "completion_mode": "all_attempted" if mode == "evaluate_policy" or config.get("episode_retry", {}).get("max_episodes") == 1 else "all_success",
             "preflight_scene_workers": 8 if capacity.get("enabled") else min(2, len(tasks)),
             "capacity_planning": capacity,
             "low_utilization_waiver": ("User explicitly accepts low utilization for this run"
@@ -135,6 +146,8 @@ def prepare(config_path, name, project, runtime, *, deadline=0, preflight=False,
         {"name": "EVO_NODE_NAME", "valueFrom": {"fieldRef": {"fieldPath": "spec.nodeName"}}}]
     container["command"] = ["/opt/envs/dreamzero/bin/python", "-u", str(snapshot / "scripts/parallel_worker.py"),
                             "--plan", str(plan_path)]
+    if handoff is not None:
+        container["command"][2] = str(snapshot / "scripts/train_and_prepare_evaluation.py")
     container["resources"] = {
         "requests": {"cpu": str(cpu_request), "memory": memory_request, "nvidia.com/gpu": "8", "ephemeral-storage": "4Gi"},
         "limits": {"cpu": str(cpu_limit), "memory": memory_limit, "nvidia.com/gpu": "8", "ephemeral-storage": "32Gi"}}
@@ -157,6 +170,7 @@ def main(argv=None):
     parser.add_argument("--name", required=True)
     parser.add_argument("--project", default="/mnt/auwomo-data/yumuzhen/my/evo")
     parser.add_argument("--runtime", default="/mnt/auwomo-data/yumuzhen/physical-rsi")
+    parser.add_argument("--source-root", help="Freeze these already-pinned framework sources instead of the canonical project source")
     parser.add_argument("--deadline", type=int, default=0)
     parser.add_argument("--cpu-request", default="64")
     parser.add_argument("--cpu-limit", default="128")
@@ -169,7 +183,8 @@ def main(argv=None):
     try:
         plan, manifest = prepare(args.config, args.name, args.project, args.runtime, deadline=args.deadline,
             preflight=args.preflight, cpu_request=args.cpu_request, cpu_limit=args.cpu_limit,
-            memory_request=args.memory_request, memory_limit=args.memory_limit, max_parallel=args.max_parallel)
+            memory_request=args.memory_request, memory_limit=args.memory_limit, max_parallel=args.max_parallel,
+            source_root=args.source_root)
     except (OSError, ValueError, TypeError) as error:
         parser.error(str(error))
     print(json.dumps(dict(job=plan["job"], run=plan["run"],

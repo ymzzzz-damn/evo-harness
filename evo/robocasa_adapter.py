@@ -8,6 +8,7 @@ and its genuine ``env.step``; it is loaded only when this adapter is constructed
 from __future__ import annotations
 
 from contextlib import contextmanager
+import copy
 import json
 import math
 import os
@@ -19,10 +20,12 @@ HOST_PREDICATES = {
     "native_success": "args:{}; native task verdict; use only on the final plan step.",
     "joint_near": "args:{part:'arm'|'torso',target:[7 radians or 1 metre],tolerance:positive number=.02}; measured joint arrival.",
     "tcp_near": "args:{position:[x,y,z],tolerance:positive metres=.01}; measured TCP position in current robot-base frame.",
+    "base_near": "args:{position:[x,y],yaw?:radians,position_tolerance:positive metres=.1,yaw_tolerance:positive radians=.15,frame:'episode_initial_base'}; measured robot.base odometry arrival, with optional wrapped heading error. Bind the destination from observations; this does not identify a fixture or prove collision-free access. move_base uses native normalized velocity channels, not SI velocities; exact orientation mapping depends on the backend. Measure actual motion through robot.base odometry.",
     "gripper_aperture": "args:{min:metres,max:metres}; measured opening interval; NEVER proves object grasp.",
     "object_grasped": "args:{object:semantic_catalog.object_ids entry}; native opposing finger contact test; not a sustained stability guarantee.",
     "object_in_receptacle": "args:{object:object_id,receptacle:object_id}; native contact and horizontal containment in a movable container.",
     "object_in_fixture": "args:{object:object_id,fixture:fixture_id}; native full object containment in a fixture.",
+    "object_on_fixture": "args:{object:object_id,fixture:fixture_id}; released object with direct upward loaded support from that fixture (>=half its weight), speed<=.03 m/s and angular speed<=.2 rad/s, and no robot gripper contact. Current settled support only: does not prove sustained stability, a particular burner, left/right placement, or containment. Side contact and hovering do not qualify.",
     "fixture_state": "args:{fixture:fixture_id,field:existing boolean state field (e.g. turned_on),value:boolean,slot_pair?:nonnegative integer,rack_level?:nonnegative integer}; selectors apply only to native getters supporting them; unknown fields produce known=false.",
     "fixture_joint": "args:{fixture:fixture_id,joint:fixture.joints entry,min:number,max:number}; native normalized joint interval, 0<=min<=max<=1.",
 }
@@ -107,9 +110,28 @@ class SerialChain:
 
 class RoboCasaAdapter:
     def __init__(self, task_name, seed=0, output_dir=None, *, layout_ids=None,
-                 style_ids=None, enable_render=True, camera_size=(256, 256)):
+                 style_ids=None, enable_render=True, camera_size=(256, 256),
+                 scene_split=None, horizon=None):
         import numpy as np
+        if scene_split not in (None, "pretrain"):
+            raise ValueError("scene_split must be null or 'pretrain'")
+        if horizon is not None and (type(horizon) is not int or horizon <= 0):
+            raise ValueError("horizon must be a positive integer or null")
+        backend_options = {}
+        if scene_split == "pretrain":
+            # Same mapping as official robocasa.utils.env_utils.create_env:
+            # independently sample train layouts/styles 11..60 and pretrain objects.
+            for name, value in (("layout_ids", layout_ids), ("style_ids", style_ids)):
+                if value is not None and not (type(value) is int and value == -2):
+                    raise ValueError(f"{name} conflicts with scene_split='pretrain'")
+            layout_ids = style_ids = -2
+            backend_options["obj_instance_split"] = "pretrain"
+        if horizon is not None:
+            # The caller freezes the official per-task dataset-registry horizon.
+            # RoboEnv accepts max_steps, while native env.horizon is set below.
+            backend_options["max_steps"] = horizon
         self.task_name, self.seed = str(task_name), int(seed)
+        self.scene_split = scene_split
         self.output_dir = Path(output_dir or "runs/robocasa")
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self._captures = self.output_dir / "observations"
@@ -123,11 +145,14 @@ class RoboCasaAdapter:
         with _renderer_compatibility():
             self._backend = RoboCasaEnv(self.task_name, seed=self.seed,
                 layout_ids=layout_ids, style_ids=style_ids, enable_render=enable_render,
-                camera_size=tuple(camera_size), stop_on_success=True)
-        # Use the benchmark's own horizon, never a synthetic enlarged budget.
-        self.horizon = int(self._backend.horizon)
-        self._backend.configured_max_steps = self._backend._max_steps = self.horizon
+                camera_size=tuple(camera_size), stop_on_success=True, **backend_options)
         try:
+            # Explicit official task budgets must govern native and wrapper stops.
+            # Omitting horizon preserves the legacy native-environment behavior.
+            self.horizon = int(self._backend.horizon) if horizon is None else horizon
+            if horizon is not None:
+                self._backend.horizon = self._backend.env.horizon = self.horizon
+            self._backend.configured_max_steps = self._backend._max_steps = self.horizon
             self._backend.reset(seed=self.seed)
             self.instruction = self._backend.goal_text()
             self._build_robot_geometry()
@@ -138,6 +163,7 @@ class RoboCasaAdapter:
         self.initial_native_success = bool(self._backend.task_completed())
         self._record("initialize", dict(task=self.task_name, seed=self.seed,
                      horizon=self.horizon, instruction=self.instruction,
+                     scene_split=self.scene_split,
                      fk_validation=self._fk_validation))
 
     def _record(self, operation, values):
@@ -157,6 +183,7 @@ class RoboCasaAdapter:
         robot, sim = native._robot, native.sim
         model, data = sim.model._model, sim.data._data
         self._base_id = sim.model.body_name2id(robot.robot_model.base.root_body)
+        self._initial_base_transform = self._world_base_transform()
         self._flange_id = sim.model.body_name2id(robot.robot_model.eef_name["right"])
         self._tcp_id = sim.model.site_name2id(robot.gripper["right"].important_sites["grip_site"])
         self._joint_ids = {part: np.asarray(robot.part_controllers[part].joint_index, dtype=int)
@@ -194,6 +221,29 @@ class RoboCasaAdapter:
         result[:3, 3] = base_r.T @ (data.site_xpos[self._tcp_id]-data.xpos[self._base_id])
         return result
 
+    def _world_base_transform(self):
+        """Read only the robot's own base pose; never a fixture destination."""
+        import numpy as np
+        data = self._backend.sim.data._data
+        result = np.eye(4)
+        result[:3, :3] = data.xmat[self._base_id].reshape(3, 3)
+        result[:3, 3] = data.xpos[self._base_id]
+        return result
+
+    def _base_observation(self):
+        """Robot localization relative to its pose at this episode's reset."""
+        import numpy as np
+        from scipy.spatial.transform import Rotation
+        initial, current = self._initial_base_transform, self._world_base_transform()
+        rotation = initial[:3, :3].T @ current[:3, :3]
+        position = initial[:3, :3].T @ (current[:3, 3]-initial[:3, 3])
+        return {"position": position.tolist(), "rotation": rotation.tolist(),
+                "quaternion_xyzw": Rotation.from_matrix(rotation).as_quat().tolist(),
+                "yaw": float(np.arctan2(rotation[1, 0], rotation[0, 0])),
+                "frame": "episode_initial_base",
+                "control_velocity_frame": "native_backend",
+                "control_units": "normalized_native_velocity"}
+
     def _fk(self, arm_q):
         return self._chains["torso"].forward(self._joint_positions("torso")) @ self._chains["right"].forward(arm_q) @ self._flange_to_tcp
 
@@ -210,7 +260,7 @@ class RoboCasaAdapter:
                 "limits": self._limits[part].tolist()}
         transform = self._tcp_transform()
         aperture = self._aperture_model["offset_m"] + np.dot(self._aperture_model["coefficients"], self._joint_positions("right_gripper"))
-        return {**parts, "home_arm": self._home, "tcp": {
+        return {**parts, "base": self._base_observation(), "home_arm": self._home, "tcp": {
             "position": transform[:3, 3].tolist(),
             "rotation": transform[:3, :3].tolist(),
             "quaternion_xyzw": Rotation.from_matrix(transform[:3, :3]).as_quat().tolist(),
@@ -249,7 +299,7 @@ class RoboCasaAdapter:
                     np.save(str(stem)+".depth.npy", depth, allow_pickle=False)
                     self._frame_cache[key] = {"image_path": str(stem)+".png",
                         "depth_path": str(stem)+".depth.npy", **self._camera_calibration(camera)}
-                cameras[camera] = self._frame_cache[key]
+                cameras[camera] = copy.deepcopy(self._frame_cache[key])
         return {"task": self.task_name, "seed": self.seed, "instruction": self.instruction,
                 "step": self.steps, "horizon": self.horizon, "terminal": self._terminal(),
                 "control_interval_s": float(self._backend.control_interval_s),
@@ -257,7 +307,7 @@ class RoboCasaAdapter:
                 "semantic_catalog": self._semantic_catalog(),
                 "images": [{"path": value["image_path"], "camera": key, "modality": "rgb"}
                            for key, value in cameras.items()],
-                "available_controls": ["step", "move_joints", "move_tcp", "move_base", "gripper", "wait", "deproject"]}
+                "available_controls": ["step", "move_joints", "move_tcp", "move_base", "gripper", "wait", "deproject", "read_camera"]}
 
     def _terminal(self):
         """Episode lifecycle signal, independent of a requested pose's arrival."""
@@ -269,8 +319,18 @@ class RoboCasaAdapter:
         return {"object_ids": sorted(env.objects), "fixtures": [
             {"id": name, "type": type(fixture).__name__, "joints": list(getattr(fixture, "joints", None) or [])}
             for name, fixture in sorted(env.fixtures.items())],
-            "fixture_aliases": {name: value.name for name, value in getattr(env, "fixture_refs", {}).items()
-                                if hasattr(value, "name")}}
+            "fixture_aliases": self._fixture_aliases()}
+
+    def _fixture_aliases(self):
+        """Native role names only; recent RoboCasa stores (fixture, region flag)."""
+        env = self._backend.env
+        identifiers = {id(fixture): name for name, fixture in env.fixtures.items()}
+        aliases = {}
+        for name, value in getattr(env, "fixture_refs", {}).items():
+            fixture = value[0] if isinstance(value, tuple) and value else value
+            if id(fixture) in identifiers:
+                aliases[name] = identifiers[id(fixture)]
+        return aliases
 
     def _guard(self):
         if self._closed:
@@ -301,7 +361,7 @@ class RoboCasaAdapter:
             elif key == "base":
                 part, command = "base", _vector(value, 3, "base")
                 if (np.abs(command) > np.array([.5, .5, 1.])).any():
-                    raise ValueError("base velocity exceeds 0.5 m/s or 1 rad/s")
+                    raise ValueError("normalized native base command exceeds x/y limits of 0.5 or yaw limit of 1")
             else:
                 part, command = "right_gripper", _vector([value], 1, "gripper")
                 if abs(command[0]) > 1:
@@ -437,6 +497,22 @@ class RoboCasaAdapter:
                 "position": actual[:3, 3].tolist(), "error_m": error, "rotation_error_rad": rotation_error,
                 "terminal": self._terminal()}
 
+    def read_camera(self, camera):
+        """Return detached arrays from the current public RGB-D frame only."""
+        import numpy as np
+        from PIL import Image
+        aliases = {"camera_left": "robot0_agentview_left", "camera_right": "robot0_agentview_right", "camera_wrist": "robot0_eye_in_hand"}
+        camera = aliases.get(camera, camera)
+        observation = self.observe()
+        if camera not in observation["cameras"]:
+            raise ValueError("Camera is not enabled")
+        metadata = observation["cameras"][camera]
+        with Image.open(metadata["image_path"]) as frame:
+            rgb = np.array(frame.convert("RGB"), copy=True)
+        depth = np.load(metadata["depth_path"], allow_pickle=False).copy()
+        return {"rgb": rgb, "depth": depth, "step": observation["step"], "camera": camera,
+                "calibration": copy.deepcopy({k: v for k, v in metadata.items() if k not in ("image_path", "depth_path")})}
+
     def deproject(self, camera, u, v, radius=1):
         import numpy as np
         aliases = {"camera_left": "robot0_agentview_left", "camera_right": "robot0_agentview_right", "camera_wrist": "robot0_eye_in_hand"}
@@ -498,7 +574,29 @@ class RoboCasaAdapter:
                 raise ValueError("Invalid aperture interval")
             result.update(success=low <= actual <= high, reason="Measured gripper opening; not an object-grasp assertion")
             result["evidence"].update(aperture_m=actual)
-        elif predicate in {"object_grasped", "object_in_receptacle", "object_in_fixture", "fixture_state", "fixture_joint"}:
+        elif predicate == "base_near":
+            if values.get("frame", "episode_initial_base") != "episode_initial_base":
+                raise ValueError("base_near targets use the episode_initial_base frame")
+            actual = self._base_observation()
+            target = _vector(values["position"], 2, "position")
+            position_error = float(np.linalg.norm(np.asarray(actual["position"][:2])-target))
+            position_tolerance = float(values.get("position_tolerance", .1))
+            yaw_tolerance = float(values.get("yaw_tolerance", .15))
+            if not (math.isfinite(position_tolerance) and position_tolerance > 0
+                    and math.isfinite(yaw_tolerance) and 0 < yaw_tolerance <= math.pi):
+                raise ValueError("base_near tolerances must be finite and positive; yaw tolerance <= pi")
+            yaw_error = None
+            if "yaw" in values:
+                yaw = float(values["yaw"])
+                if not math.isfinite(yaw):
+                    raise ValueError("base_near yaw must be finite")
+                yaw_error = abs(math.atan2(math.sin(actual["yaw"]-yaw), math.cos(actual["yaw"]-yaw)))
+            result.update(success=position_error <= position_tolerance and (yaw_error is None or yaw_error <= yaw_tolerance),
+                          reason="Measured robot base arrival in episode odometry; semantic destination grounding is separate")
+            result["evidence"].update(position=actual["position"][:2], yaw=actual["yaw"],
+                                      position_error_m=position_error, yaw_error_rad=yaw_error,
+                                      frame="episode_initial_base")
+        elif predicate in {"object_grasped", "object_in_receptacle", "object_in_fixture", "object_on_fixture", "fixture_state", "fixture_joint"}:
             # These predicates stay owner-side. Only a verdict/reason is returned,
             # never simulator positions, fixture geometry or mutable references.
             try:
@@ -515,9 +613,9 @@ class RoboCasaAdapter:
         env = self._backend.env
         if name in env.fixtures:
             return env.fixtures[name]
-        references = getattr(env, "fixture_refs", {})
-        if name in references and references[name] in env.fixtures.values():
-            return references[name]
+        aliases = self._fixture_aliases()
+        if name in aliases:
+            return env.fixtures[aliases[name]]
         item = getattr(env, str(name), None)
         if item is not None and any(item is value for value in env.fixtures.values()):
             return item
@@ -537,6 +635,8 @@ class RoboCasaAdapter:
         fixture = self._fixture(values["fixture"])
         if predicate == "object_in_fixture":
             return object_utils.obj_inside_of(env, values["object"], fixture), "Native object/fixture containment"
+        if predicate == "object_on_fixture":
+            return self._object_on_fixture(values["object"], fixture), "Released, slow object with direct upward load-bearing fixture contact; current support, not sustained or relative-placement proof"
         if predicate == "fixture_state":
             import inspect
             import numpy as np
@@ -563,6 +663,60 @@ class RoboCasaAdapter:
             raise ValueError("Fixture normalized joint interval must lie in [0,1]")
         position = float(fixture.get_joint_state(env, [joint])[joint])
         return low <= position <= high, "Native normalized fixture joint interval"
+
+    def _object_on_fixture(self, object_name, fixture):
+        """Host-only contact/velocity evidence, without exporting scene geometry.
+
+        Mere collision is insufficient: a side wall or a zero-force margin
+        contact cannot support an object. MuJoCo's contact normal points from
+        geom1 to geom2, so its sign is reversed when the object is geom1.
+        A positive result is a current physical state, not a time-window claim.
+        """
+        import mujoco
+        import numpy as np
+        env, native = self._backend.env, self._backend
+        obj = env.objects[object_name]
+        for robot in env.robots:
+            grippers = robot.gripper.values() if isinstance(robot.gripper, dict) else [robot.gripper]
+            if any(env.check_contact(gripper, obj) for gripper in grippers):
+                return False
+        linear = np.asarray(native.sim.data.get_body_xvelp(obj.root_body), dtype=float)
+        angular = np.asarray(native.sim.data.get_body_xvelr(obj.root_body), dtype=float)
+        if not np.isfinite(linear).all() or not np.isfinite(angular).all():
+            raise ValueError("Object velocity unavailable")
+        if np.linalg.norm(linear) > .03 or np.linalg.norm(angular) > .2:
+            return False
+        model, data = native.sim.model._model, native.sim.data._data
+        body = native.sim.model.body_name2id(obj.root_body)
+        gravity = np.asarray(model.opt.gravity, dtype=float)
+        gravity_norm = float(np.linalg.norm(gravity))
+        weight = float(model.body_subtreemass[body])*gravity_norm
+        if not math.isfinite(weight) or weight <= 0:
+            raise ValueError("Object weight unavailable for support verification")
+        up = -gravity/gravity_norm
+        obj_geoms = {native.sim.model.geom_name2id(name) for name in obj.contact_geoms}
+        fixture_geoms = {native.sim.model.geom_name2id(name) for name in fixture.contact_geoms}
+        if not obj_geoms or not fixture_geoms:
+            raise ValueError("Object or fixture has no contact geometry")
+        support = 0.
+        force = np.zeros(6)
+        for index in range(data.ncon):
+            contact = data.contact[index]
+            if contact.geom1 in fixture_geoms and contact.geom2 in obj_geoms:
+                sign = 1.
+            elif contact.geom2 in fixture_geoms and contact.geom1 in obj_geoms:
+                sign = -1.
+            else:
+                continue
+            upward = float(np.dot(sign*np.asarray(contact.frame[:3]), up))
+            if upward < .5:
+                continue
+            force[:] = 0
+            mujoco.mj_contactForce(model, data, index, force)
+            if not np.isfinite(force).all():
+                raise ValueError("Contact force unavailable")
+            support += max(0., float(force[0]))*upward
+        return support >= .5*weight
 
     def stats(self):
         return {"task": self.task_name, "seed": self.seed, "steps": self.steps,

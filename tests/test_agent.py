@@ -15,12 +15,12 @@ from unittest.mock import patch
 from evo.agent import (Agent, CommandProvider, HTTPProvider, ProviderError,
                        ResponseError, ScriptedProvider, parse_json,
                        validate_candidate, validate_plan)
-from evo.prompts import ATOM_NAMES
+from evo.prompts import ATOM_NAMES, PLAN_SCHEMA
 
 
 def plan():
     return {"reasoning": "Close the observed door.", "steps": [{
-        "id": "close", "atom": "P07", "params": {"target": "door", "fraction": 0.0},
+        "id": "close", "atom": "A10", "params": {"target": "door", "fraction": 0.0},
         "goal": "Close the door", "postcondition": {"predicate": "native_success", "args": {}},
         "depends_on": []}]}
 
@@ -28,6 +28,16 @@ def plan():
 def candidate():
     return {"code": "def skill(api, params):\n    api.wait(params['ticks'])\n",
             "rationale": "Bounded control fixture; not a RoboCasa policy.", "dependencies": []}
+
+
+def prefix_plan():
+    result = plan()
+    result["plan_complete"] = False
+    result["reasoning"] = "Verify closing first; ground the remaining task from the next observation."
+    result["steps"][0]["postcondition"] = {
+        "predicate": "fixture_joint",
+        "args": {"fixture": "door", "joint": "hinge", "min": 0.0, "max": 0.05}}
+    return result
 
 
 @contextmanager
@@ -75,10 +85,10 @@ def responses_envelope(response):
 
 class AgentTests(unittest.TestCase):
     def test_taxonomy_complete_and_empty_by_construction(self):
-        self.assertEqual(set(ATOM_NAMES), {f"P{number:02d}" for number in range(1, 41)})
+        self.assertEqual(set(ATOM_NAMES), {f"{prefix}{number:02d}" for prefix, count in (("P", 3), ("A", 26), ("C", 3)) for number in range(1, count + 1)})
         provider = ScriptedProvider({"plan": [plan()]})
         agent = Agent(provider)
-        self.assertEqual(agent.plan({})["steps"][0]["atom"], "P07")
+        self.assertEqual(agent.plan({})["steps"][0]["atom"], "A10")
         self.assertIn("empty atom is a contract", provider.requests[0]["instructions"])
 
     def test_strict_json_rejects_fences_duplicates_nonfinite_and_trailing_text(self):
@@ -90,13 +100,13 @@ class AgentTests(unittest.TestCase):
     def test_plan_dependencies_and_host_verification(self):
         valid = plan()
         valid["steps"].insert(0, {
-            "id": "approach", "atom": "P40", "params": {}, "goal": "Approach",
+            "id": "approach", "atom": "A01", "params": {}, "goal": "Approach",
             "postcondition": {"predicate": "base_near", "args": {}}, "depends_on": []})
         valid["steps"][1]["depends_on"] = ["approach"]
         context = {"supported_predicates": ["base_near", "native_success"]}
         self.assertEqual(validate_plan(valid, context), valid)
         for mutate in (
-            lambda p: p["steps"][0].update(atom="P41"),
+            lambda p: p["steps"][0].update(atom="A27"),
             lambda p: p["steps"][0].update(depends_on=["close"]),
             lambda p: p["steps"][0].update(postcondition={"predicate": "native_success", "args": {}}),
             lambda p: p["steps"][0].update(postcondition={"predicate": "self_report", "args": {}}),
@@ -116,6 +126,71 @@ class AgentTests(unittest.TestCase):
         suffix["steps"][0]["id"] = "approach"
         with self.assertRaises(ResponseError):
             validate_plan(suffix, context)
+
+    def test_verifiable_prefix_is_allowed_without_whole_task_postcondition(self):
+        prefix = prefix_plan()
+        provider = ScriptedProvider({"plan": [prefix]})
+        context = {"instruction": "Close the door, then complete the remaining composite task.",
+                   "supported_predicates": {"fixture_joint": "Host fixture joint interval"}}
+        self.assertEqual(Agent(provider).plan(context), prefix)
+        schema = provider.requests[0]["response_schema"]
+        self.assertEqual(schema["properties"]["plan_complete"]["type"], "boolean")
+        self.assertNotIn("plan_complete", schema["required"])
+        self.assertIn("continue_after_verified_prefix", provider.requests[0]["instructions"])
+        self.assertIn("uncertainty about later atoms must not block", provider.requests[0]["instructions"].lower())
+
+    def test_plan_complete_preserves_legacy_and_explicit_complete_responses(self):
+        legacy = plan()
+        self.assertEqual(validate_plan(legacy), legacy)
+        self.assertNotIn("plan_complete", validate_plan(legacy))
+        complete = {**legacy, "plan_complete": True}
+        self.assertEqual(validate_plan(complete), complete)
+        # The host can find native success after a final local predicate too.
+        local_last = {**prefix_plan(), "plan_complete": True}
+        self.assertEqual(validate_plan(local_last), local_last)
+        self.assertEqual(PLAN_SCHEMA["required"], ["steps", "reasoning"])
+
+    def test_plan_complete_rejects_nonboolean_and_unknown_top_level_fields(self):
+        for value in (None, 0, 1, "false", [], {}):
+            with self.subTest(value=value), self.assertRaisesRegex(ResponseError, "boolean"):
+                validate_plan({**plan(), "plan_complete": value})
+        with self.assertRaises(ResponseError):
+            validate_plan({**prefix_plan(), "task_success": True})
+
+    def test_unfinished_prefix_cannot_use_native_success_or_invent_predicates(self):
+        with self.assertRaisesRegex(ResponseError, "unfinished prefix"):
+            validate_plan({**plan(), "plan_complete": False})
+        with self.assertRaisesRegex(ResponseError, "not supported"):
+            validate_plan(prefix_plan(), {"supported_predicates": ["native_success"]})
+
+    def test_continuation_uses_current_episode_prefix_and_refreshed_context(self):
+        suffix = plan()
+        suffix["steps"][0]["id"] = "close_next_door"
+        suffix["steps"][0]["depends_on"] = ["open_first_door"]
+        suffix["steps"][0]["params"]["pixel"] = [45, 88]
+        context = {
+            "phase": "continue_after_verified_prefix",
+            "completed_steps": [{"step": {"id": "open_first_door"}, "verified": True}],
+            "observation": {"frame_id": "current_after_prefix"},
+            "library": {"A10": {"version": "v2"}},
+            "episode_retry": {"previous_episodes": [{"completed_steps": [{"id": "old_episode_only"}]}]},
+        }
+        provider = ScriptedProvider({"plan": [suffix]})
+        self.assertEqual(Agent(provider).plan(context), suffix)
+        self.assertEqual(provider.requests[0]["context"], context)
+        with self.assertRaisesRegex(ResponseError, "cannot repeat"):
+            repeated = json.loads(json.dumps(suffix))
+            repeated["steps"][0]["id"] = "open_first_door"
+            validate_plan(repeated, context)
+        with self.assertRaisesRegex(ResponseError, "dependencies"):
+            old_dependency = json.loads(json.dumps(suffix))
+            old_dependency["steps"][0]["depends_on"] = ["old_episode_only"]
+            validate_plan(old_dependency, context)
+
+    def test_empty_plan_remains_legal_when_no_next_atom_is_verifiable(self):
+        blocked = {"steps": [], "reasoning": "No supported predicate can verify the next atom.",
+                   "plan_complete": False}
+        self.assertEqual(validate_plan(blocked, {"supported_predicates": []}), blocked)
 
     def test_candidate_contract_does_not_execute_code(self):
         self.assertEqual(validate_candidate(candidate()), candidate())

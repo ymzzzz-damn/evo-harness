@@ -20,7 +20,7 @@ _FORBIDDEN_NAMES = {
 }
 _FORBIDDEN_NODES = (ast.Import, ast.ImportFrom, ast.ClassDef, ast.AsyncFunctionDef, ast.Await,
                     ast.Global, ast.Nonlocal, ast.Yield, ast.YieldFrom)
-API_METHODS = frozenset({"observe", "step", "move_joints", "move_tcp", "move_base", "gripper", "wait", "deproject", "call"})
+API_METHODS = frozenset({"observe", "step", "move_joints", "move_tcp", "move_base", "gripper", "wait", "deproject", "read_camera", "call"})
 _FORBIDDEN_ATTRIBUTES = {"load", "save", "savez", "savez_compressed", "loadtxt", "savetxt", "genfromtxt",
                          "fromfile", "tofile", "memmap", "open_memmap", "dump", "dumps", "ctypes",
                          "ctypeslib", "f2py", "testing", "test", "os", "sys", "subprocess", "pathlib"}
@@ -102,7 +102,7 @@ def check_code(code: str, atom: str | None = None) -> dict:
             func = node.func
             if isinstance(func.value, ast.Name) and func.value.id == "api" and func.attr == "call":
                 if len(node.args) != 2 or node.keywords or not isinstance(node.args[0], ast.Constant) or not isinstance(node.args[0].value, str):
-                    errors.append("dependencies must use api.call('Pxx', params_dictionary)")
+                    errors.append("dependencies must use api.call('Pxx/Axx/Cxx', params_dictionary)")
                 else:
                     dependency = node.args[0].value
                     try:

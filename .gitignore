@@ -44,3 +44,11 @@ model_logs/
 *.mp4
 *.hdf5
 *.h5
+
+# Additional generated libraries, runtime snapshots and recovery bundles
+library_*/
+preparations/
+batches/
+runtime/
+recovery/
+.ssh/

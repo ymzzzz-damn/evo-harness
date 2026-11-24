@@ -27,7 +27,7 @@ class CampaignSummaryTests(unittest.TestCase):
         self.run = self.root / "run"
         self.run.mkdir()
         self.library = Library(self.root / "library")
-        self.baseline_version = self.publish("P09", CODE, "/old_campaign/exploration")
+        self.baseline_version = self.publish("A14", CODE, "/old_campaign/exploration")
         self.baseline = self.root / "library_baseline_state.json"
         self.baseline.write_bytes(self.library.state_path.read_bytes())
         self.workers = [{"index": index, "task": {"task": f"Task{index}", "seed": 0},
@@ -159,20 +159,20 @@ class CampaignSummaryTests(unittest.TestCase):
 
     def test_baseline_tools_are_separate_from_new_tools_and_exported_without_library_mutation(self):
         self.setup_mixed_queue()
-        new = self.publish("P10", OTHER, str(Path(self.workers[0]["run"]) / "campaign/000_Task0_seed0/exploration"))
-        self.library.propose("P01", CODE)  # Unvalidated source isn't a tool.
+        new = self.publish("A13", OTHER, str(Path(self.workers[0]["run"]) / "campaign/000_Task0_seed0/exploration"))
+        self.library.propose("A02", CODE)  # Unvalidated source isn't a tool.
         before = {path: path.read_bytes() for path in self.library.root.rglob("*") if path.is_file()}
         report = summary.summarize_campaign(self.plan)
         tools = report["tools"]
-        self.assertEqual([(entry["atom"], entry["version"]) for entry in tools["baseline_versions"]], [("P09", 1)])
-        self.assertEqual([(entry["atom"], entry["version"]) for entry in tools["campaign_new_versions"]], [("P10", 1)])
+        self.assertEqual([(entry["atom"], entry["version"]) for entry in tools["baseline_versions"]], [("A14", 1)])
+        self.assertEqual([(entry["atom"], entry["version"]) for entry in tools["campaign_new_versions"]], [("A13", 1)])
         self.assertEqual(tools["counts"]["active_validated_tools"], 2)
         self.assertEqual(tools["counts"]["unvalidated_candidates"], 1)
         summary.write_summary(report, self.run / "campaign_summary.json", self.run / "tool_report.json")
         self.assertEqual(len(tools["exported_code"]), 2)
-        exported = self.run / "code_tools/P10_v1.py"
+        exported = self.run / "code_tools/A13_v1.py"
         self.assertEqual(source_hash(exported.read_text()), new["sha256"])
-        self.assertFalse((self.run / "code_tools/P01_v1.py").exists())
+        self.assertFalse((self.run / "code_tools/A02_v1.py").exists())
         entry = tools["campaign_new_versions"][0]
         self.assertEqual(entry["entrypoint"], "skill(api, params) -> dict")
         self.assertEqual(entry["coverage"][0]["params"]["object"], "fixture")
@@ -196,20 +196,20 @@ class CampaignSummaryTests(unittest.TestCase):
         self.assertEqual(task["outcome"], "failed")
 
     def test_broken_tool_source_is_reported_and_never_exported(self):
-        version = self.publish("P10", OTHER, str(Path(self.workers[0]["run"]) / "campaign/exploration"))
+        version = self.publish("A13", OTHER, str(Path(self.workers[0]["run"]) / "campaign/exploration"))
         Path(version["source_path"]).write_text("tampered")
         report = summary.summarize_campaign(self.plan)
         self.assertEqual(report["tools"]["counts"]["published_versions_with_integrity_errors"], 1)
         self.assertEqual(report["tools"]["counts"]["new_validated_versions_from_this_campaign"], 0)
         summary.write_summary(report, self.run / "campaign_summary.json", self.run / "tool_report.json")
-        self.assertFalse((self.run / "code_tools/P10_v1.py").exists())
+        self.assertFalse((self.run / "code_tools/A13_v1.py").exists())
 
     def test_corrupted_replay_metadata_is_not_counted_as_validated_tool(self):
         original = Library._read_state_file(self.library.state_path)
         for field in ("validation_kind", "candidate_sha256", "case_ids"):
             with self.subTest(field=field):
                 state = json.loads(json.dumps(original))
-                record = state["versions"]["P09"]["1"]
+                record = state["versions"]["A14"]["1"]
                 if field == "case_ids":
                     record["case_ids"] = []
                 else:
@@ -235,9 +235,9 @@ class CampaignSummaryTests(unittest.TestCase):
 
     def test_failed_task_keeps_immediately_published_tool_and_maintenance_status(self):
         exploration = self.episode(1, "step_failed")
-        experience = exploration / "pending/01_P10.json"
+        experience = exploration / "pending/01_A13.json"
         self.episode(1, "step_failed", pending=[str(experience)])
-        version = self.publish("P10", OTHER, str(exploration))
+        version = self.publish("A13", OTHER, str(exploration))
         campaign_root = Path(self.workers[1]["run"]) / "campaign"
         campaign = json.loads((campaign_root / "summary.json").read_text())
         campaign.update(task_status="tasks_incomplete", maintenance_status="complete")
@@ -245,14 +245,14 @@ class CampaignSummaryTests(unittest.TestCase):
         self.write(campaign_root / "maintenance_runs.json", [{
             "output": str(campaign_root / "maintenance/run_0001"), "status": "complete",
             "experience_paths": [str(experience)], "result": {"status": "complete", "rejected": [],
-                "promoted": [{"atom": "P10", "version": 1, "sha256": version["sha256"]}]}}])
+                "promoted": [{"atom": "A13", "version": 1, "sha256": version["sha256"]}]}}])
         self.write(self.receipt, {"workers": [{"index": 1, "status": "failed", "returncode": 1}]})
         report = summary.summarize_campaign(self.plan)
         task = report["tasks"][1]
         self.assertEqual(task["outcome"], "failed")
         self.assertEqual(task["task_status"], "tasks_incomplete")
         self.assertEqual(task["maintenance_status"], "complete")
-        self.assertEqual(task["maintenance_promoted"][0]["atom"], "P10")
+        self.assertEqual(task["maintenance_promoted"][0]["atom"], "A13")
         self.assertEqual(task["pending_experiences_total"], 1)
         self.assertEqual(task["pending_unpublished_experiences"], 0)
         self.assertEqual(report["tools"]["counts"]["new_validated_versions_from_this_campaign"], 1)
@@ -263,7 +263,7 @@ class CampaignSummaryTests(unittest.TestCase):
         campaign = json.loads((campaign_root / "summary.json").read_text())
         campaign.update(status="validation_failed", task_status="complete", maintenance_status="failed")
         campaign["episodes"][0].update(maintenance_status="failed", maintenance={
-            "status": "some_candidates_rejected", "promoted": [], "rejected": [{"atom": "P10"}]})
+            "status": "some_candidates_rejected", "promoted": [], "rejected": [{"atom": "A13"}]})
         self.write(campaign_root / "summary.json", campaign)
         self.write(self.receipt, {"workers": [{"index": 0, "status": "failed", "returncode": 1}]})
         task = summary.summarize_campaign(self.plan)["tasks"][0]
@@ -274,16 +274,16 @@ class CampaignSummaryTests(unittest.TestCase):
 
     def test_reuse_admission_adds_coverage_without_inventing_a_new_code_version(self):
         exploration = self.episode(2, "step_failed")
-        case_id = self.library.stage_case({"atom": "P09", "task_config": self.workers[2]["task"],
-            "step": {"atom": "P09", "params": {"object": "another_fixture", "target": "on"}},
+        case_id = self.library.stage_case({"atom": "A14", "task_config": self.workers[2]["task"],
+            "step": {"atom": "A14", "params": {"object": "another_fixture", "target": "on"}},
             "require_native_success": False, "source_run": str(exploration)})
-        self.library.stage_case({"atom": "P09", "source_run": str(exploration),
+        self.library.stage_case({"atom": "A14", "source_run": str(exploration),
                                  "step": {"params": {"unverified": True}}})
-        cases = self.library.cases("P09") + [self.library.get_case(case_id)]
+        cases = self.library.cases("A14") + [self.library.get_case(case_id)]
         proof = {"candidate_sha256": self.baseline_version["sha256"], "success": True,
                  "validation_kind": "fresh_environment_replay",
                  "cases": [{"case_id": case["id"], "success": True, "native_success": False} for case in cases]}
-        self.library.accept_case(case_id, "P09", 1, proof)
+        self.library.accept_case(case_id, "A14", 1, proof)
         report = summary.summarize_campaign(self.plan)
         tools = report["tools"]
         self.assertEqual(tools["counts"]["published_versions"], 1)
@@ -302,12 +302,12 @@ class CampaignSummaryTests(unittest.TestCase):
 
     def test_corrupted_reuse_activation_is_not_counted_as_validated_new_coverage(self):
         source = str(Path(self.workers[0]["run"]) / "campaign/exploration")
-        case_id = self.library.stage_case({"atom": "P09", "source_run": source, "step": {"params": {"new": True}}})
+        case_id = self.library.stage_case({"atom": "A14", "source_run": source, "step": {"params": {"new": True}}})
         proof = {"candidate_sha256": self.baseline_version["sha256"], "success": True,
                  "validation_kind": "fresh_environment_replay", "cases": [
                      {"case_id": case["id"], "success": True}
-                     for case in self.library.cases("P09") + [self.library.get_case(case_id)]]}
-        self.library.accept_case(case_id, "P09", 1, proof)
+                     for case in self.library.cases("A14") + [self.library.get_case(case_id)]]}
+        self.library.accept_case(case_id, "A14", 1, proof)
         with self.library._locked():
             state = self.library._load()
             state["case_activations"][case_id]["validation"]["success"] = False

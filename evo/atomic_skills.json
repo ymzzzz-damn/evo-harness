@@ -1,0 +1,1607 @@
+{
+  "version": "robocasa-human300-pac32-v1",
+  "families": {
+    "perception": "感知与效果检查",
+    "navigation": "移动与操作接近",
+    "pick_place": "抓取、释放与放置",
+    "spatial_relations": "空间关系与堆叠",
+    "loaded_transport": "带内容物搬运",
+    "articulation_lids": "机构与盖体开合",
+    "controls": "控制件操作",
+    "container_motion": "持容器动态操作",
+    "tool_contact": "定向接触与工具操作",
+    "flow": "水流作用",
+    "temporal": "事件等待与状态保持",
+    "push_slide": "自由物体推移",
+    "coordination": "多目标分配与执行调度"
+  },
+  "provenance": {
+    "design_date": "2026-11-17",
+    "design_file": "robocasa_human300_capabilities_20261117.json",
+    "design_sha256": "a346e6cf7df0b20053b4dad8d2f3a8b6f4b4b3f9aac1c355e17cc61cd7dc4682",
+    "four_column_text_sha256": "4ad0e013bdc76731a32a412f7660a71bb8e7b9148b0b6188e1b363f345255695",
+    "training_scope": "PRETRAINING_TASKS.pretrain300",
+    "training_tasks": 300,
+    "atomic_tasks": 65,
+    "composite_tasks": 235,
+    "coverage_status": "static_requirements_only_not_execution_verified"
+  },
+  "robot_contract": {
+    "embodiment": "PandaOmron",
+    "manipulation_arms": 1,
+    "parts": [
+      "arm",
+      "base",
+      "torso",
+      "gripper"
+    ],
+    "constraints": "单臂单夹爪：持物时不能同时抓另一个把手/控制件；需要合法暂存、释放或调整顺序。载物移动保护姿态与内容物。"
+  },
+  "skills": {
+    "P01": {
+      "id": "P01",
+      "name": "ground_targets",
+      "label": "目标与属性识别",
+      "layer": "perception",
+      "family": "perception",
+      "summary": "根据指令和当前图像识别目标、参考物及类别、材质、大小等属性；返回候选对象、属性证据和不确定性。",
+      "description": "P01 ground_targets（目标与属性识别）\n根据指令和当前图像识别目标、参考物及类别、材质、大小等属性；返回候选对象、属性证据和不确定性。\n语义接口：ground_targets(instruction, rgbd, references)。语义参数通过 params 传入；实际 Python 入口统一为 skill(api, params)，不是新增的仿真 API。\n支持变体：类别、材质、大小、成熟度、可微波属性、容器内物体、指定左右侧\n前置条件：获得当前图像和指令；目标可能不在视野内\n完成效果：返回候选目标、属性证据、对应关系和不确定性\n可观测检查：多视角重观察；属性看不清或不能从输入判断时返回 unknown\n有限恢复：限定搜索次数；不把物体名称、位置或私有标识当作观测\n待验收维度：同类干扰物、遮挡、相似大小和材质；确认不选错目标\n参数：instruction：instruction：由当前观测绑定，含义参见语义接口 ground_targets(instruction, rgbd, references)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；rgbd：rgbd：由当前观测绑定，含义参见语义接口 ground_targets(instruction, rgbd, references)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；references：references：由当前观测绑定，含义参见语义接口 ground_targets(instruction, rgbd, references)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。\n运行职责：这是需要生成、修复、参数化和入库的 Python 能力；起初为空。可独立作为计划步骤，发布后可由其他 P/A/C 能力通过锁定版本的 api.call 复用。host 负责独立验证、重置和入库。\n应用示例：挑选成熟水果；筛选金属餐具；选择可微波物品；识别目标饭盒。 这是需求设计，不是实现或实测覆盖证明。\n代码可使用 api.observe()、api.read_camera(camera) 的当前 RGB/深度数组和标定、api.deproject() 以及明确带来源的 params。没有内置 VLM；语义不确定时返回 unknown 并交还 host 获取新观测。输出应有 data/evidence/uncertainty 等结构化字段；P03 历史通过 params.history 输入、返回更新后的历史，不读私有评分或计时器。数据一致性校验只证明所列输出，不等于识别属性正确或整项能力完全实现。",
+      "parameters": {
+        "instruction": {
+          "required": false,
+          "recommended": true,
+          "description": "instruction：由当前观测绑定，含义参见语义接口 ground_targets(instruction, rgbd, references)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "rgbd": {
+          "required": false,
+          "recommended": true,
+          "description": "rgbd：由当前观测绑定，含义参见语义接口 ground_targets(instruction, rgbd, references)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "references": {
+          "required": false,
+          "recommended": true,
+          "description": "references：由当前观测绑定，含义参见语义接口 ground_targets(instruction, rgbd, references)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        }
+      },
+      "semantic_signature": "ground_targets(instruction, rgbd, references)",
+      "contract": {
+        "variants": "类别、材质、大小、成熟度、可微波属性、容器内物体、指定左右侧",
+        "preconditions": "获得当前图像和指令；目标可能不在视野内",
+        "effects": "返回候选目标、属性证据、对应关系和不确定性",
+        "observable_verification": "多视角重观察；属性看不清或不能从输入判断时返回 unknown",
+        "bounded_failure_recovery": "限定搜索次数；不把物体名称、位置或私有标识当作观测",
+        "acceptance_tests": "同类干扰物、遮挡、相似大小和材质；确认不选错目标"
+      },
+      "applications": "挑选成熟水果；筛选金属餐具；选择可微波物品；识别目标饭盒。",
+      "source_training_examples": [
+        "ChooseRipeFruit",
+        "OrganizeMetallicUtensils",
+        "PlaceMicrowaveSafeItem",
+        "PackDessert"
+      ],
+      "execution_mode": "learned_code",
+      "execution_owner": "skill_executor",
+      "entrypoint": "skill(api, params) -> dict",
+      "implemented": false
+    },
+    "P02": {
+      "id": "P02",
+      "name": "estimate_geometry",
+      "label": "几何与机构估计",
+      "layer": "perception",
+      "family": "perception",
+      "summary": "估计物体位姿、容器开口、支撑面、把手及运动机构；给出接近方向、可达区域和估计误差，场景变化后更新。",
+      "description": "P02 estimate_geometry（几何与机构估计）\n估计物体位姿、容器开口、支撑面、把手及运动机构；给出接近方向、可达区域和估计误差，场景变化后更新。\n语义接口：estimate_geometry(target, rgbd, calibration)。语义参数通过 params 传入；实际 Python 入口统一为 skill(api, params)，不是新增的仿真 API。\n支持变体：物体位姿、容器开口、支撑面、把手、铰链轴、滑轨、旋钮轴、可达区域\n前置条件：目标已定位；相机与机器人坐标可对齐\n完成效果：产生物体相对几何、接近方向、机构类型及估计误差\n可观测检查：深度一致性、多点几何支持；移动后刷新估计\n有限恢复：拒绝混入前景的平面；无法区分铰链和滑动机构时不强行动作\n待验收维度：单门/双门、上下开口、浅盘/深碗、近景遮挡、机体移动后的更新\n参数：target：由当前观测绑定的目标实体、位置或关系。；rgbd：rgbd：由当前观测绑定，含义参见语义接口 estimate_geometry(target, rgbd, calibration)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；calibration：calibration：由当前观测绑定，含义参见语义接口 estimate_geometry(target, rgbd, calibration)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。\n运行职责：这是需要生成、修复、参数化和入库的 Python 能力；起初为空。可独立作为计划步骤，发布后可由其他 P/A/C 能力通过锁定版本的 api.call 复用。host 负责独立验证、重置和入库。\n应用示例：估计柜门铰链、抽屉滑轨、杯口和咖啡机承接位；导航后的操作位重定位。 这是需求设计，不是实现或实测覆盖证明。\n代码可使用 api.observe()、api.read_camera(camera) 的当前 RGB/深度数组和标定、api.deproject() 以及明确带来源的 params。没有内置 VLM；语义不确定时返回 unknown 并交还 host 获取新观测。输出应有 data/evidence/uncertainty 等结构化字段；P03 历史通过 params.history 输入、返回更新后的历史，不读私有评分或计时器。数据一致性校验只证明所列输出，不等于识别属性正确或整项能力完全实现。",
+      "parameters": {
+        "target": {
+          "required": false,
+          "recommended": true,
+          "description": "由当前观测绑定的目标实体、位置或关系。"
+        },
+        "rgbd": {
+          "required": false,
+          "recommended": true,
+          "description": "rgbd：由当前观测绑定，含义参见语义接口 estimate_geometry(target, rgbd, calibration)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "calibration": {
+          "required": false,
+          "recommended": true,
+          "description": "calibration：由当前观测绑定，含义参见语义接口 estimate_geometry(target, rgbd, calibration)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        }
+      },
+      "semantic_signature": "estimate_geometry(target, rgbd, calibration)",
+      "contract": {
+        "variants": "物体位姿、容器开口、支撑面、把手、铰链轴、滑轨、旋钮轴、可达区域",
+        "preconditions": "目标已定位；相机与机器人坐标可对齐",
+        "effects": "产生物体相对几何、接近方向、机构类型及估计误差",
+        "observable_verification": "深度一致性、多点几何支持；移动后刷新估计",
+        "bounded_failure_recovery": "拒绝混入前景的平面；无法区分铰链和滑动机构时不强行动作",
+        "acceptance_tests": "单门/双门、上下开口、浅盘/深碗、近景遮挡、机体移动后的更新"
+      },
+      "applications": "估计柜门铰链、抽屉滑轨、杯口和咖啡机承接位；导航后的操作位重定位。",
+      "source_training_examples": [
+        "NavigateKitchen",
+        "OpenCabinet",
+        "SlideDishwasherRack",
+        "CoffeeSetupMug"
+      ],
+      "execution_mode": "learned_code",
+      "execution_owner": "skill_executor",
+      "entrypoint": "skill(api, params) -> dict",
+      "implemented": false
+    },
+    "P03": {
+      "id": "P03",
+      "name": "observe_effect",
+      "label": "效果检查与历史状态记录",
+      "layer": "perception",
+      "family": "perception",
+      "summary": "检查抓稳、释放、包含、开合、姿态、接触与颜色等效果；记录持续时间和事件顺序，返回满足、未满足或未知。",
+      "description": "P03 observe_effect（效果检查与历史状态记录）\n检查抓稳、释放、包含、开合、姿态、接触与颜色等效果；记录持续时间和事件顺序，返回满足、未满足或未知。\n语义接口：observe_effect(predicate, before, after, history)。语义参数通过 params 传入；实际 Python 入口统一为 skill(api, params)，不是新增的仿真 API。\n支持变体：抓稳、释放、包含、接触运动、开合、姿态、颜色、时间与先后关系\n前置条件：声明要检查的可观测效果及所需观测\n完成效果：返回满足/未满足/未知，并保留阶段历史\n可观测检查：只用图像、深度、机器人状态和控制时钟；原生评分由外部评测器计算\n有限恢复：遮挡时主动换视角；不把仿真成功函数或私有计时器接入运行时\n待验收维度：完成后被破坏、假抓取、短暂接触、事件顺序错误、观测缺失\n参数：predicate：希望观察的效果/事件及允许的证据，不能读取或调用仿真评分器。；before：before：由当前观测绑定，含义参见语义接口 observe_effect(predicate, before, after, history)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；after：after：由当前观测绑定，含义参见语义接口 observe_effect(predicate, before, after, history)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；history：history：由当前观测绑定，含义参见语义接口 observe_effect(predicate, before, after, history)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。\n运行职责：这是需要生成、修复、参数化和入库的 Python 能力；起初为空。可独立作为计划步骤，发布后可由其他 P/A/C 能力通过锁定版本的 api.call 复用。host 负责独立验证、重置和入库。\n应用示例：确认水壶先冷却再搬走；记录擦拭覆盖；观察酱汁变色；记录秤上等待。 这是需求设计，不是实现或实测覆盖证明。\n代码可使用 api.observe()、api.read_camera(camera) 的当前 RGB/深度数组和标定、api.deproject() 以及明确带来源的 params。没有内置 VLM；语义不确定时返回 unknown 并交还 host 获取新观测。输出应有 data/evidence/uncertainty 等结构化字段；P03 历史通过 params.history 输入、返回更新后的历史，不读私有评分或计时器。数据一致性校验只证明所列输出，不等于识别属性正确或整项能力完全实现。",
+      "parameters": {
+        "predicate": {
+          "required": false,
+          "recommended": true,
+          "description": "希望观察的效果/事件及允许的证据，不能读取或调用仿真评分器。"
+        },
+        "before": {
+          "required": false,
+          "recommended": true,
+          "description": "before：由当前观测绑定，含义参见语义接口 observe_effect(predicate, before, after, history)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "after": {
+          "required": false,
+          "recommended": true,
+          "description": "after：由当前观测绑定，含义参见语义接口 observe_effect(predicate, before, after, history)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "history": {
+          "required": false,
+          "recommended": true,
+          "description": "history：由当前观测绑定，含义参见语义接口 observe_effect(predicate, before, after, history)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        }
+      },
+      "semantic_signature": "observe_effect(predicate, before, after, history)",
+      "contract": {
+        "variants": "抓稳、释放、包含、接触运动、开合、姿态、颜色、时间与先后关系",
+        "preconditions": "声明要检查的可观测效果及所需观测",
+        "effects": "返回满足/未满足/未知，并保留阶段历史",
+        "observable_verification": "只用图像、深度、机器人状态和控制时钟；原生评分由外部评测器计算",
+        "bounded_failure_recovery": "遮挡时主动换视角；不把仿真成功函数或私有计时器接入运行时",
+        "acceptance_tests": "完成后被破坏、假抓取、短暂接触、事件顺序错误、观测缺失"
+      },
+      "applications": "确认水壶先冷却再搬走；记录擦拭覆盖；观察酱汁变色；记录秤上等待。",
+      "source_training_examples": [
+        "CoolKettle",
+        "ScrubCuttingBoard",
+        "TurnOffSimmeredSauceHeat",
+        "ScalePortioning"
+      ],
+      "execution_mode": "learned_code",
+      "execution_owner": "skill_executor",
+      "entrypoint": "skill(api, params) -> dict",
+      "implemented": false
+    },
+    "A01": {
+      "id": "A01",
+      "name": "navigate_align",
+      "label": "导航与操作位对齐",
+      "layer": "action",
+      "family": "navigation",
+      "summary": "移动底盘到当前场景中的目标操作位置，调整朝向并停稳；携物时保持持握和姿态约束，到达后确认目标可操作。",
+      "description": "A01 navigate_align（导航与操作位对齐）\n移动底盘到当前场景中的目标操作位置，调整朝向并停稳；携物时保持持握和姿态约束，到达后确认目标可操作。\n语义接口：navigate_align(target, standoff, facing, carrying=None)。实际执行统一使用 skill(api, params)，这些参数放入 params。\n支持变体：空手、持物、带内容物；目标设施和工作区域变化\n前置条件：有可通行局部路线和当前目标观测\n完成效果：机器人到达可操作距离与朝向；搬运约束保持\n可观测检查：底盘自身位移与朝向闭环；重新观测目标关系\n有限恢复：步数上限、停滞检测、短距离退让和重观察；不盲走\n待验收维度：不同设施、布局、初始朝向、距离、阻挡；携物时保持约束\n参数：target：由当前观测绑定的目标实体、位置或关系。；standoff：距目标工作区域的操作距离，单位米。；facing：目标朝向，明确坐标系及弧度约定。；carrying：carrying：由当前观测绑定，含义参见语义接口 navigate_align(target, standoff, facing, carrying=None)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。\n运行职责：通过已暴露的 api 和已发布 P/A/C依赖实现；观察、动作、效果诊断与有限恢复共享 host 预算。返回 status/evidence/phase 等诊断不得替代 host 验证。\n验证边界：base_near 仅证明底盘里程计到达，不能单独证明机械臂可操作目标。 仅使用 supported_predicates；没有匹配的独立判据时返回 unknown/说明阻塞，不伪造成功。native_success 只用于真正完成整任务的最后一步。\n应用示例：移动到水槽、冰箱、橱柜和餐桌前；跨区域搬运的移动阶段。 这是需求设计，不是实现或实测覆盖证明。",
+      "parameters": {
+        "target": {
+          "required": false,
+          "recommended": true,
+          "description": "由当前观测绑定的目标实体、位置或关系。"
+        },
+        "standoff": {
+          "required": false,
+          "recommended": true,
+          "description": "距目标工作区域的操作距离，单位米。"
+        },
+        "facing": {
+          "required": false,
+          "recommended": true,
+          "description": "目标朝向，明确坐标系及弧度约定。"
+        },
+        "carrying": {
+          "required": false,
+          "recommended": true,
+          "description": "carrying：由当前观测绑定，含义参见语义接口 navigate_align(target, standoff, facing, carrying=None)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        }
+      },
+      "semantic_signature": "navigate_align(target, standoff, facing, carrying=None)",
+      "contract": {
+        "variants": "空手、持物、带内容物；目标设施和工作区域变化",
+        "preconditions": "有可通行局部路线和当前目标观测",
+        "effects": "机器人到达可操作距离与朝向；搬运约束保持",
+        "observable_verification": "底盘自身位移与朝向闭环；重新观测目标关系",
+        "bounded_failure_recovery": "步数上限、停滞检测、短距离退让和重观察；不盲走",
+        "acceptance_tests": "不同设施、布局、初始朝向、距离、阻挡；携物时保持约束"
+      },
+      "applications": "移动到水槽、冰箱、橱柜和餐桌前；跨区域搬运的移动阶段。",
+      "source_training_examples": [
+        "NavigateKitchen",
+        "DeliverStraw",
+        "ServeTea",
+        "HotDogSetup"
+      ],
+      "execution_mode": "learned_code",
+      "execution_owner": "skill_executor",
+      "entrypoint": "skill(api, params) -> dict",
+      "implemented": false
+    },
+    "A02": {
+      "id": "A02",
+      "name": "grasp_lift",
+      "label": "抓取与稳定提起",
+      "layer": "action",
+      "family": "pick_place",
+      "summary": "接近目标本体或把手，建立抓握并稳定提起；结合夹爪状态和物体随动检查抓稳，结束时目标由夹爪持有。",
+      "description": "A02 grasp_lift（抓取与稳定提起）\n接近目标本体或把手，建立抓握并稳定提起；结合夹爪状态和物体随动检查抓稳，结束时目标由夹爪持有。\n语义接口：grasp_lift(object, grasp_mode, clearance)。实际执行统一使用 skill(api, params)，这些参数放入 params。\n支持变体：食品、小方块、薄杆、刀具、杯体/杯柄、锅柄、盖子\n前置条件：夹爪空闲；目标可达且有抓取候选\n完成效果：目标随夹爪稳定移动并离开原支撑\n可观测检查：夹爪状态与图像中的物体运动一致；提起后复查\n有限恢复：有限重抓、改变接近方向；保持旁边物体和家具不被误操作\n待验收维度：各抓取形态、柜内/水槽/窄槽取物；提起与滑落检测\n参数：object：当前场景中的目标对象绑定；不要硬编码仿真 ID 或世界坐标。；grasp_mode：grasp_mode：由当前观测绑定，含义参见语义接口 grasp_lift(object, grasp_mode, clearance)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；clearance：净空或提起距离，单位米；给出参考坐标系。\n运行职责：通过已暴露的 api 和已发布 P/A/C依赖实现；观察、动作、效果诊断与有限恢复共享 host 预算。返回 status/evidence/phase 等诊断不得替代 host 验证。\n验证边界：object_grasped 仅检查相向接触；夹爪闭合不等于稳定抓握，需提起/随动证据。 仅使用 supported_predicates；没有匹配的独立判据时返回 unknown/说明阻塞，不伪造成功。native_success 只用于真正完成整任务的最后一步。\n应用示例：抓杯子、食材、吸管、餐具、海绵、盖子和锅柄；从柜内、水槽或窄槽取物。 这是需求设计，不是实现或实测覆盖证明。",
+      "parameters": {
+        "object": {
+          "required": false,
+          "recommended": true,
+          "description": "当前场景中的目标对象绑定；不要硬编码仿真 ID 或世界坐标。"
+        },
+        "grasp_mode": {
+          "required": false,
+          "recommended": true,
+          "description": "grasp_mode：由当前观测绑定，含义参见语义接口 grasp_lift(object, grasp_mode, clearance)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "clearance": {
+          "required": false,
+          "recommended": true,
+          "description": "净空或提起距离，单位米；给出参考坐标系。"
+        }
+      },
+      "semantic_signature": "grasp_lift(object, grasp_mode, clearance)",
+      "contract": {
+        "variants": "食品、小方块、薄杆、刀具、杯体/杯柄、锅柄、盖子",
+        "preconditions": "夹爪空闲；目标可达且有抓取候选",
+        "effects": "目标随夹爪稳定移动并离开原支撑",
+        "observable_verification": "夹爪状态与图像中的物体运动一致；提起后复查",
+        "bounded_failure_recovery": "有限重抓、改变接近方向；保持旁边物体和家具不被误操作",
+        "acceptance_tests": "各抓取形态、柜内/水槽/窄槽取物；提起与滑落检测"
+      },
+      "applications": "抓杯子、食材、吸管、餐具、海绵、盖子和锅柄；从柜内、水槽或窄槽取物。",
+      "source_training_examples": [
+        "PickPlaceDrawerToCounter",
+        "DeliverStraw",
+        "KettleBoiling",
+        "JuiceFruitReamer"
+      ],
+      "execution_mode": "learned_code",
+      "execution_owner": "skill_executor",
+      "entrypoint": "skill(api, params) -> dict",
+      "implemented": false
+    },
+    "A03": {
+      "id": "A03",
+      "name": "release_retreat",
+      "label": "释放与安全撤离",
+      "layer": "action",
+      "family": "pick_place",
+      "summary": "在物体已有支撑或接触操作完成后，解除抓握或接触并安全撤离；确认目标状态保持，夹爪不再带动物体。",
+      "description": "A03 release_retreat（释放与安全撤离）\n在物体已有支撑或接触操作完成后，解除抓握或接触并安全撤离；确认目标状态保持，夹爪不再带动物体。\n语义接口：release_retreat(object_or_control, retreat_axis)。实际执行统一使用 skill(api, params)，这些参数放入 params。\n支持变体：放物后释放；按键、旋钮、门把手操作后的回撤\n前置条件：物体已有支撑，或接触动作已达到目标\n完成效果：夹爪空闲且远离目标；目标状态保持\n可观测检查：夹爪状态、撤离位移、物体稳定性与按键回弹\n有限恢复：先减载再松爪；避免回撤带动物体；不在空中释放\n待验收维度：盘内物体、柜内物体、按键、窄空间撤离和黏连\n参数：object_or_control：object_or_control：由当前观测绑定，含义参见语义接口 release_retreat(object_or_control, retreat_axis)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；retreat_axis：retreat_axis：由当前观测绑定，含义参见语义接口 release_retreat(object_or_control, retreat_axis)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。\n运行职责：通过已暴露的 api 和已发布 P/A/C依赖实现；观察、动作、效果诊断与有限恢复共享 host 预算。返回 status/evidence/phase 等诊断不得替代 host 验证。\n验证边界：夹爪张开不证明物体已有支撑或控制件效果仍保持。 仅使用 supported_predicates；没有匹配的独立判据时返回 unknown/说明阻塞，不伪造成功。native_success 只用于真正完成整任务的最后一步。\n应用示例：放物后松爪撤手；操作门把手、旋钮和按钮后退出；擦拭后释放工具。 这是需求设计，不是实现或实测覆盖证明。",
+      "parameters": {
+        "object_or_control": {
+          "required": false,
+          "recommended": true,
+          "description": "object_or_control：由当前观测绑定，含义参见语义接口 release_retreat(object_or_control, retreat_axis)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "retreat_axis": {
+          "required": false,
+          "recommended": true,
+          "description": "retreat_axis：由当前观测绑定，含义参见语义接口 release_retreat(object_or_control, retreat_axis)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        }
+      },
+      "semantic_signature": "release_retreat(object_or_control, retreat_axis)",
+      "contract": {
+        "variants": "放物后释放；按键、旋钮、门把手操作后的回撤",
+        "preconditions": "物体已有支撑，或接触动作已达到目标",
+        "effects": "夹爪空闲且远离目标；目标状态保持",
+        "observable_verification": "夹爪状态、撤离位移、物体稳定性与按键回弹",
+        "bounded_failure_recovery": "先减载再松爪；避免回撤带动物体；不在空中释放",
+        "acceptance_tests": "盘内物体、柜内物体、按键、窄空间撤离和黏连"
+      },
+      "applications": "放物后松爪撤手；操作门把手、旋钮和按钮后退出；擦拭后释放工具。",
+      "source_training_examples": [
+        "CoffeeSetupMug",
+        "TurnOnMicrowave",
+        "PickPlaceCounterToCabinet",
+        "ScrubCuttingBoard"
+      ],
+      "execution_mode": "learned_code",
+      "execution_owner": "skill_executor",
+      "entrypoint": "skill(api, params) -> dict",
+      "implemented": false
+    },
+    "A04": {
+      "id": "A04",
+      "name": "place_on",
+      "label": "支撑面放置",
+      "layer": "action",
+      "family": "pick_place",
+      "summary": "将已持物体移到指定支撑区域，控制下降和接触，完成稳定放置；可复用 A03 释放撤离，并复查支撑关系。",
+      "description": "A04 place_on（支撑面放置）\n将已持物体移到指定支撑区域，控制下降和接触，完成稳定放置；可复用 A03 释放撤离，并复查支撑关系。\n语义接口：place_on(object, surface, region, clearance)。实际执行统一使用 skill(api, params)，这些参数放入 params。\n支持变体：台面、砧板、炉头、架面、浅盘；高低支撑面\n前置条件：持有目标；目标支撑区域可用\n完成效果：物体在指定支撑面稳定放置\n可观测检查：几何落点、稳定观察和释放后复查\n有限恢复：接触前减速；摆放不稳时重抓；不能把悬停当作放置\n待验收维度：高低与边缘位置、物体尺寸、支撑不足和干扰物\n参数：object：当前场景中的目标对象绑定；不要硬编码仿真 ID 或世界坐标。；surface：surface：由当前观测绑定，含义参见语义接口 place_on(object, surface, region, clearance)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；region：region：由当前观测绑定，含义参见语义接口 place_on(object, surface, region, clearance)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；clearance：净空或提起距离，单位米；给出参考坐标系。\n运行职责：通过已暴露的 api 和已发布 P/A/C依赖实现；观察、动作、效果诊断与有限恢复共享 host 预算。返回 status/evidence/phase 等诊断不得替代 host 验证。\n验证边界：object_on_fixture 不能证明特定炉头、区域或物体堆叠关系。 仅使用 supported_predicates；没有匹配的独立判据时返回 unknown/说明阻塞，不伪造成功。native_success 只用于真正完成整任务的最后一步。\n应用示例：放到台面、砧板、炉头和层架；从抽屉取物放到台面；搬运锅具。 这是需求设计，不是实现或实测覆盖证明。",
+      "parameters": {
+        "object": {
+          "required": false,
+          "recommended": true,
+          "description": "当前场景中的目标对象绑定；不要硬编码仿真 ID 或世界坐标。"
+        },
+        "surface": {
+          "required": false,
+          "recommended": true,
+          "description": "surface：由当前观测绑定，含义参见语义接口 place_on(object, surface, region, clearance)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "region": {
+          "required": false,
+          "recommended": true,
+          "description": "region：由当前观测绑定，含义参见语义接口 place_on(object, surface, region, clearance)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "clearance": {
+          "required": false,
+          "recommended": true,
+          "description": "净空或提起距离，单位米；给出参考坐标系。"
+        }
+      },
+      "semantic_signature": "place_on(object, surface, region, clearance)",
+      "contract": {
+        "variants": "台面、砧板、炉头、架面、浅盘；高低支撑面",
+        "preconditions": "持有目标；目标支撑区域可用",
+        "effects": "物体在指定支撑面稳定放置",
+        "observable_verification": "几何落点、稳定观察和释放后复查",
+        "bounded_failure_recovery": "接触前减速；摆放不稳时重抓；不能把悬停当作放置",
+        "acceptance_tests": "高低与边缘位置、物体尺寸、支撑不足和干扰物"
+      },
+      "applications": "放到台面、砧板、炉头和层架；从抽屉取物放到台面；搬运锅具。",
+      "source_training_examples": [
+        "PickPlaceDrawerToCounter",
+        "PickPlaceCounterToOven",
+        "TransportCookware"
+      ],
+      "execution_mode": "learned_code",
+      "execution_owner": "skill_executor",
+      "entrypoint": "skill(api, params) -> dict",
+      "implemented": false
+    },
+    "A05": {
+      "id": "A05",
+      "name": "place_in",
+      "label": "容器及承接区放置",
+      "layer": "action",
+      "family": "pick_place",
+      "summary": "经打开的入口把已持物体放入指定容器或内部区域，处理边缘、深度和容量约束；释放后检查包含关系。",
+      "description": "A05 place_in（容器及承接区放置）\n经打开的入口把已持物体放入指定容器或内部区域，处理边缘、深度和容量约束；释放后检查包含关系。\n语义接口：place_in(object, receptacle, target_region)。实际执行统一使用 skill(api, params)，这些参数放入 params。\n支持变体：碗、锅、饭盒、杯、搅拌杯、水槽、柜内和冰箱内；含浅盘承接区\n前置条件：持有目标；入口打开、放置区域可达且容量足够\n完成效果：目标物体留在指定容器/内部区域并稳定\n可观测检查：相对开口与边界估计、释放后物体位置和容器稳定性\n有限恢复：绕过容器边缘；受阻停止；入口状态不明时先检查\n待验收维度：宽口/窄口、深浅、不同物体尺度、柜架与冰箱层\n参数：object：当前场景中的目标对象绑定；不要硬编码仿真 ID 或世界坐标。；receptacle：receptacle：由当前观测绑定，含义参见语义接口 place_in(object, receptacle, target_region)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；target_region：target_region：由当前观测绑定，含义参见语义接口 place_in(object, receptacle, target_region)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。\n运行职责：通过已暴露的 api 和已发布 P/A/C依赖实现；观察、动作、效果诊断与有限恢复共享 host 预算。返回 status/evidence/phase 等诊断不得替代 host 验证。\n验证边界：object_in_receptacle/object_in_fixture 只按 host 暴露的包含语义使用；不能证明额外的深度、释放和容量条件。 仅使用 supported_predicates；没有匹配的独立判据时返回 unknown/说明阻塞，不伪造成功。native_success 只用于真正完成整任务的最后一步。\n应用示例：食材入碗或锅；物品入饭盒、橱柜、冰箱和水槽；向多个饭盒装食物。 这是需求设计，不是实现或实测覆盖证明。",
+      "parameters": {
+        "object": {
+          "required": false,
+          "recommended": true,
+          "description": "当前场景中的目标对象绑定；不要硬编码仿真 ID 或世界坐标。"
+        },
+        "receptacle": {
+          "required": false,
+          "recommended": true,
+          "description": "receptacle：由当前观测绑定，含义参见语义接口 place_in(object, receptacle, target_region)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "target_region": {
+          "required": false,
+          "recommended": true,
+          "description": "target_region：由当前观测绑定，含义参见语义接口 place_in(object, receptacle, target_region)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        }
+      },
+      "semantic_signature": "place_in(object, receptacle, target_region)",
+      "contract": {
+        "variants": "碗、锅、饭盒、杯、搅拌杯、水槽、柜内和冰箱内；含浅盘承接区",
+        "preconditions": "持有目标；入口打开、放置区域可达且容量足够",
+        "effects": "目标物体留在指定容器/内部区域并稳定",
+        "observable_verification": "相对开口与边界估计、释放后物体位置和容器稳定性",
+        "bounded_failure_recovery": "绕过容器边缘；受阻停止；入口状态不明时先检查",
+        "acceptance_tests": "宽口/窄口、深浅、不同物体尺度、柜架与冰箱层"
+      },
+      "applications": "食材入碗或锅；物品入饭盒、橱柜、冰箱和水槽；向多个饭盒装食物。",
+      "source_training_examples": [
+        "PickPlaceCounterToCabinet",
+        "PickPlaceCounterToStove",
+        "PackIdenticalLunches"
+      ],
+      "execution_mode": "learned_code",
+      "execution_owner": "skill_executor",
+      "entrypoint": "skill(api, params) -> dict",
+      "implemented": false
+    },
+    "A06": {
+      "id": "A06",
+      "name": "place_pose",
+      "label": "相对位置与姿态调整",
+      "layer": "action",
+      "family": "spatial_relations",
+      "summary": "以参考物为基准调整位置和朝向，满足左右、相邻、对齐、指定层、倒置或杯柄朝向等关系，同时保护已有放置效果。",
+      "description": "A06 place_pose（相对位置与姿态调整）\n以参考物为基准调整位置和朝向，满足左右、相邻、对齐、指定层、倒置或杯柄朝向等关系，同时保护已有放置效果。\n语义接口：place_pose(object, reference, relation, orientation)。实际执行统一使用 skill(api, params)，这些参数放入 params。\n支持变体：左右、前后、相邻、远离、对齐、聚类、指定层；正立、倒置、杯柄朝向、锅内旋转\n前置条件：参考物已识别；目标关系有定义；物体可抓取或可安全调整\n完成效果：物体满足相对位置/朝向，且已有放置效果不被破坏\n可观测检查：物体相对参考物的几何、位姿与历史姿态差\n有限恢复：关系歧义时重新解释指令；不使用固定世界坐标\n待验收维度：参考物旋转、柜体坐标变化、正立/倒置、左右和前后互换\n参数：object：当前场景中的目标对象绑定；不要硬编码仿真 ID 或世界坐标。；reference：reference：由当前观测绑定，含义参见语义接口 place_pose(object, reference, relation, orientation)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；relation：relation：由当前观测绑定，含义参见语义接口 place_pose(object, reference, relation, orientation)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；orientation：orientation：由当前观测绑定，含义参见语义接口 place_pose(object, reference, relation, orientation)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。\n运行职责：通过已暴露的 api 和已发布 P/A/C依赖实现；观察、动作、效果诊断与有限恢复共享 host 预算。返回 status/evidence/phase 等诊断不得替代 host 验证。\n验证边界：左右、倒置、杯柄方向等关系需要对应的可用判据，通用放在设备上不足以证明。 仅使用 supported_predicates；没有匹配的独立判据时返回 unknown/说明阻塞，不伪造成功。native_success 只用于真正完成整任务的最后一步。\n应用示例：摆放刀叉；倒置杯子；统一杯柄朝向；旋转锅具；布置滤网。 这是需求设计，不是实现或实测覆盖证明。",
+      "parameters": {
+        "object": {
+          "required": false,
+          "recommended": true,
+          "description": "当前场景中的目标对象绑定；不要硬编码仿真 ID 或世界坐标。"
+        },
+        "reference": {
+          "required": false,
+          "recommended": true,
+          "description": "reference：由当前观测绑定，含义参见语义接口 place_pose(object, reference, relation, orientation)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "relation": {
+          "required": false,
+          "recommended": true,
+          "description": "relation：由当前观测绑定，含义参见语义接口 place_pose(object, reference, relation, orientation)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "orientation": {
+          "required": false,
+          "recommended": true,
+          "description": "orientation：由当前观测绑定，含义参见语义接口 place_pose(object, reference, relation, orientation)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        }
+      },
+      "semantic_signature": "place_pose(object, reference, relation, orientation)",
+      "contract": {
+        "variants": "左右、前后、相邻、远离、对齐、聚类、指定层；正立、倒置、杯柄朝向、锅内旋转",
+        "preconditions": "参考物已识别；目标关系有定义；物体可抓取或可安全调整",
+        "effects": "物体满足相对位置/朝向，且已有放置效果不被破坏",
+        "observable_verification": "物体相对参考物的几何、位姿与历史姿态差",
+        "bounded_failure_recovery": "关系歧义时重新解释指令；不使用固定世界坐标",
+        "acceptance_tests": "参考物旋转、柜体坐标变化、正立/倒置、左右和前后互换"
+      },
+      "applications": "摆放刀叉；倒置杯子；统一杯柄朝向；旋转锅具；布置滤网。",
+      "source_training_examples": [
+        "AlignSilverware",
+        "DryDrinkware",
+        "OrganizeMugsByHandle",
+        "RotatePan",
+        "StrainerSetup"
+      ],
+      "execution_mode": "learned_code",
+      "execution_owner": "skill_executor",
+      "entrypoint": "skill(api, params) -> dict",
+      "implemented": false
+    },
+    "A07": {
+      "id": "A07",
+      "name": "insert_dock",
+      "label": "窄口插入与功能位置对接",
+      "layer": "action",
+      "family": "spatial_relations",
+      "summary": "根据开口轴向、深度和功能位置对齐并小步进退，完成插入、取离或对接；处理卡边并检查功能位置关系。",
+      "description": "A07 insert_dock（窄口插入与功能位置对接）\n根据开口轴向、深度和功能位置对齐并小步进退，完成插入、取离或对接；处理卡边并检查功能位置关系。\n语义接口：insert_dock(object, opening, axis, depth)。实际执行统一使用 skill(api, params)，这些参数放入 params。\n支持变体：吸管入杯、食品出入吐司机槽、杯子对接咖啡出液口\n前置条件：目标开口与轴向已估计；物体抓取姿态允许接近\n完成效果：目标进入指定开口或功能承接位；取离模式下目标已离开约束/功能位并保持可控，后续放置依任务安排。\n可观测检查：视觉相对位置、进退位移、未顶住边缘且释放后稳定\n有限恢复：小步接近；卡住时退回重对齐；限制接触位移\n待验收维度：窄槽、杯口、不同插入角度；区分放在旁边与正确对接\n参数：object：当前场景中的目标对象绑定；不要硬编码仿真 ID 或世界坐标。；opening：opening：由当前观测绑定，含义参见语义接口 insert_dock(object, opening, axis, depth)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；axis：axis：由当前观测绑定，含义参见语义接口 insert_dock(object, opening, axis, depth)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；depth：插入/取离深度，单位米，明确开口轴向与模式。\n运行职责：通过已暴露的 api 和已发布 P/A/C依赖实现；观察、动作、效果诊断与有限恢复共享 host 预算。返回 status/evidence/phase 等诊断不得替代 host 验证。\n验证边界：咖啡口、吐司机窄槽和取离需要相应功能关系判据，不能仅以 TCP 到达代替。 仅使用 supported_predicates；没有匹配的独立判据时返回 unknown/说明阻塞，不伪造成功。native_success 只用于真正完成整任务的最后一步。\n应用示例：吸管入杯；面包进出吐司机槽；杯子对接咖啡出液口或从该位置取走。 这是需求设计，不是实现或实测覆盖证明。",
+      "parameters": {
+        "object": {
+          "required": false,
+          "recommended": true,
+          "description": "当前场景中的目标对象绑定；不要硬编码仿真 ID 或世界坐标。"
+        },
+        "opening": {
+          "required": false,
+          "recommended": true,
+          "description": "opening：由当前观测绑定，含义参见语义接口 insert_dock(object, opening, axis, depth)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "axis": {
+          "required": false,
+          "recommended": true,
+          "description": "axis：由当前观测绑定，含义参见语义接口 insert_dock(object, opening, axis, depth)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "depth": {
+          "required": false,
+          "recommended": true,
+          "description": "插入/取离深度，单位米，明确开口轴向与模式。"
+        }
+      },
+      "semantic_signature": "insert_dock(object, opening, axis, depth)",
+      "contract": {
+        "variants": "吸管入杯、食品出入吐司机槽、杯子对接咖啡出液口",
+        "preconditions": "目标开口与轴向已估计；物体抓取姿态允许接近",
+        "effects": "目标进入指定开口或功能承接位；取离模式下目标已离开约束/功能位并保持可控，后续放置依任务安排。",
+        "observable_verification": "视觉相对位置、进退位移、未顶住边缘且释放后稳定",
+        "bounded_failure_recovery": "小步接近；卡住时退回重对齐；限制接触位移",
+        "acceptance_tests": "窄槽、杯口、不同插入角度；区分放在旁边与正确对接"
+      },
+      "applications": "吸管入杯；面包进出吐司机槽；杯子对接咖啡出液口或从该位置取走。",
+      "source_training_examples": [
+        "CoffeeSetupMug",
+        "CoffeeServeMug",
+        "DeliverStraw",
+        "PickPlaceToasterToCounter"
+      ],
+      "execution_mode": "learned_code",
+      "execution_owner": "skill_executor",
+      "entrypoint": "skill(api, params) -> dict",
+      "implemented": false
+    },
+    "A08": {
+      "id": "A08",
+      "name": "stack_nest",
+      "label": "堆叠与嵌套",
+      "layer": "action",
+      "family": "spatial_relations",
+      "summary": "按大小和顺序形成稳定的上下或嵌套关系；完成对齐、落放与释放，新增一层时保持已有层次稳定。",
+      "description": "A08 stack_nest（堆叠与嵌套）\n按大小和顺序形成稳定的上下或嵌套关系；完成对齐、落放与释放，新增一层时保持已有层次稳定。\n语义接口：stack_nest(object, base, order, nesting_mode)。实际执行统一使用 skill(api, params)，这些参数放入 params。\n支持变体：碗嵌套、罐子堆叠、酸奶容器按大小堆叠\n前置条件：底层物体稳定；大小关系与接触区域已确定\n完成效果：形成稳定的上下/嵌套关系，并保持此前层次\n可观测检查：相对高度、水平重叠、稳定性与释放后的关系\n有限恢复：下层晃动则停止；必要时先重新摆稳底层\n待验收维度：两件/多件、同类不同大小、柜内与水槽内、倒塌恢复\n参数：object：当前场景中的目标对象绑定；不要硬编码仿真 ID 或世界坐标。；base：base：由当前观测绑定，含义参见语义接口 stack_nest(object, base, order, nesting_mode)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；order：order：由当前观测绑定，含义参见语义接口 stack_nest(object, base, order, nesting_mode)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；nesting_mode：nesting_mode：由当前观测绑定，含义参见语义接口 stack_nest(object, base, order, nesting_mode)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。\n运行职责：通过已暴露的 api 和已发布 P/A/C依赖实现；观察、动作、效果诊断与有限恢复共享 host 预算。返回 status/evidence/phase 等诊断不得替代 host 验证。\n验证边界：高度/重叠不是稳定嵌套证据；当前通用 fixture 支撑判据不能证明物体间堆叠。 仅使用 supported_predicates；没有匹配的独立判据时返回 unknown/说明阻塞，不伪造成功。native_success 只用于真正完成整任务的最后一步。\n应用示例：柜内叠碗、水槽叠碗、堆罐子、按大小堆叠酸奶容器。 这是需求设计，不是实现或实测覆盖证明。",
+      "parameters": {
+        "object": {
+          "required": false,
+          "recommended": true,
+          "description": "当前场景中的目标对象绑定；不要硬编码仿真 ID 或世界坐标。"
+        },
+        "base": {
+          "required": false,
+          "recommended": true,
+          "description": "base：由当前观测绑定，含义参见语义接口 stack_nest(object, base, order, nesting_mode)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "order": {
+          "required": false,
+          "recommended": true,
+          "description": "order：由当前观测绑定，含义参见语义接口 stack_nest(object, base, order, nesting_mode)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "nesting_mode": {
+          "required": false,
+          "recommended": true,
+          "description": "nesting_mode：由当前观测绑定，含义参见语义接口 stack_nest(object, base, order, nesting_mode)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        }
+      },
+      "semantic_signature": "stack_nest(object, base, order, nesting_mode)",
+      "contract": {
+        "variants": "碗嵌套、罐子堆叠、酸奶容器按大小堆叠",
+        "preconditions": "底层物体稳定；大小关系与接触区域已确定",
+        "effects": "形成稳定的上下/嵌套关系，并保持此前层次",
+        "observable_verification": "相对高度、水平重叠、稳定性与释放后的关系",
+        "bounded_failure_recovery": "下层晃动则停止；必要时先重新摆稳底层",
+        "acceptance_tests": "两件/多件、同类不同大小、柜内与水槽内、倒塌恢复"
+      },
+      "applications": "柜内叠碗、水槽叠碗、堆罐子、按大小堆叠酸奶容器。",
+      "source_training_examples": [
+        "StackBowlsCabinet",
+        "StackBowlsInSink",
+        "StackCans",
+        "SizeSorting",
+        "RecycleStackedYogurt"
+      ],
+      "execution_mode": "learned_code",
+      "execution_owner": "skill_executor",
+      "entrypoint": "skill(api, params) -> dict",
+      "implemented": false
+    },
+    "A09": {
+      "id": "A09",
+      "name": "carry_preserve",
+      "label": "带内容物控姿搬运",
+      "layer": "action",
+      "family": "loaded_transport",
+      "summary": "搬运已抓稳且装有内容物的容器，限制倾角、速度和加速度；移动中及放置后检查内容物保留和容器姿态。",
+      "description": "A09 carry_preserve（带内容物控姿搬运）\n搬运已抓稳且装有内容物的容器，限制倾角、速度和加速度；移动中及放置后检查内容物保留和容器姿态。\n语义接口：carry_preserve(container, destination, contents, pose_limits)。实际执行统一使用 skill(api, params)，这些参数放入 params。\n支持变体：装食品的碗/锅、杯中物、冰格；近距离搬移和跨区域导航\n前置条件：容器已抓稳；内容物状态已记录\n完成效果：容器到达目标，内容物与正立等约束保持\n可观测检查：移动中与放置后观察容器姿态和内容物保留情况\n有限恢复：限制倾角与加速度；洒落或滑落时停下并交还上层重规划\n待验收维度：不同容器、装载量、抓柄方式、转弯和放置阶段\n参数：container：当前持有的容器及可观测内容物约束。；destination：destination：由当前观测绑定，含义参见语义接口 carry_preserve(container, destination, contents, pose_limits)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；contents：contents：由当前观测绑定，含义参见语义接口 carry_preserve(container, destination, contents, pose_limits)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；pose_limits：pose_limits：由当前观测绑定，含义参见语义接口 carry_preserve(container, destination, contents, pose_limits)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。\n运行职责：通过已暴露的 api 和已发布 P/A/C依赖实现；观察、动作、效果诊断与有限恢复共享 host 预算。返回 status/evidence/phase 等诊断不得替代 host 验证。\n验证边界：到达目标不证明内容物全程保留，需持续/最终内容物关系证据。 仅使用 supported_predicates；没有匹配的独立判据时返回 unknown/说明阻塞，不伪造成功。native_success 只用于真正完成整任务的最后一步。\n应用示例：搬运装食物的碗或锅；碗中放杯后搬碗；整碗放入微波炉或冰箱。 这是需求设计，不是实现或实测覆盖证明。",
+      "parameters": {
+        "container": {
+          "required": false,
+          "recommended": true,
+          "description": "当前持有的容器及可观测内容物约束。"
+        },
+        "destination": {
+          "required": false,
+          "recommended": true,
+          "description": "destination：由当前观测绑定，含义参见语义接口 carry_preserve(container, destination, contents, pose_limits)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "contents": {
+          "required": false,
+          "recommended": true,
+          "description": "contents：由当前观测绑定，含义参见语义接口 carry_preserve(container, destination, contents, pose_limits)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "pose_limits": {
+          "required": false,
+          "recommended": true,
+          "description": "pose_limits：由当前观测绑定，含义参见语义接口 carry_preserve(container, destination, contents, pose_limits)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        }
+      },
+      "semantic_signature": "carry_preserve(container, destination, contents, pose_limits)",
+      "contract": {
+        "variants": "装食品的碗/锅、杯中物、冰格；近距离搬移和跨区域导航",
+        "preconditions": "容器已抓稳；内容物状态已记录",
+        "effects": "容器到达目标，内容物与正立等约束保持",
+        "observable_verification": "移动中与放置后观察容器姿态和内容物保留情况",
+        "bounded_failure_recovery": "限制倾角与加速度；洒落或滑落时停下并交还上层重规划",
+        "acceptance_tests": "不同容器、装载量、抓柄方式、转弯和放置阶段"
+      },
+      "applications": "搬运装食物的碗或锅；碗中放杯后搬碗；整碗放入微波炉或冰箱。",
+      "source_training_examples": [
+        "BowlAndCup",
+        "ArrangeBreadBowl",
+        "SteamInMicrowave",
+        "StoreLeftoversInBowl"
+      ],
+      "execution_mode": "learned_code",
+      "execution_owner": "skill_executor",
+      "entrypoint": "skill(api, params) -> dict",
+      "implemented": false
+    },
+    "A10": {
+      "id": "A10",
+      "name": "operate_hinged",
+      "label": "铰链与门体开合",
+      "layer": "action",
+      "family": "articulation_lids",
+      "summary": "识别铰链和受力点，沿允许的运动轨迹将门体、盖体或机头调到目标开度，再释放撤离并复查。",
+      "description": "A10 operate_hinged（铰链与门体开合）\n识别铰链和受力点，沿允许的运动轨迹将门体、盖体或机头调到目标开度，再释放撤离并复查。\n语义接口：operate_hinged(target, goal_opening, hinge_model)。实际执行统一使用 skill(api, params)，这些参数放入 params。\n支持变体：单/双柜门、冰箱门、下翻烤箱/洗碗机门、厨师机机头、铰接壶盖\n前置条件：运动机构与受力点已识别；行程不被阻挡\n完成效果：指定门叶/机头达到开合目标\n可观测检查：图像中的开角、间隙和把手运动；不读取关节真值\n有限恢复：分机构选择轨迹；停滞或意外接触时撤离重估\n待验收维度：左右铰链、上下翻、双门、多把手；滑门另走 A11\n参数：target：由当前观测绑定的目标实体、位置或关系。；goal_opening：目标开度，明确归一化比例或弧度约定。；hinge_model：hinge_model：由当前观测绑定，含义参见语义接口 operate_hinged(target, goal_opening, hinge_model)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。\n运行职责：通过已暴露的 api 和已发布 P/A/C依赖实现；观察、动作、效果诊断与有限恢复共享 host 预算。返回 status/evidence/phase 等诊断不得替代 host 验证。\n验证边界：fixture_joint 用归一化开度，joint_near 用各自文档单位；这些是 host 验证接口，不可在技能中读取机构真值。 仅使用 supported_predicates；没有匹配的独立判据时返回 unknown/说明阻塞，不伪造成功。native_success 只用于真正完成整任务的最后一步。\n应用示例：橱柜门、冰箱门、微波炉门、烤箱门、洗碗机门；厨师机机头；电热水壶铰接盖。 这是需求设计，不是实现或实测覆盖证明。",
+      "parameters": {
+        "target": {
+          "required": false,
+          "recommended": true,
+          "description": "由当前观测绑定的目标实体、位置或关系。"
+        },
+        "goal_opening": {
+          "required": false,
+          "recommended": true,
+          "description": "目标开度，明确归一化比例或弧度约定。"
+        },
+        "hinge_model": {
+          "required": false,
+          "recommended": true,
+          "description": "hinge_model：由当前观测绑定，含义参见语义接口 operate_hinged(target, goal_opening, hinge_model)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        }
+      },
+      "semantic_signature": "operate_hinged(target, goal_opening, hinge_model)",
+      "contract": {
+        "variants": "单/双柜门、冰箱门、下翻烤箱/洗碗机门、厨师机机头、铰接壶盖",
+        "preconditions": "运动机构与受力点已识别；行程不被阻挡",
+        "effects": "指定门叶/机头达到开合目标",
+        "observable_verification": "图像中的开角、间隙和把手运动；不读取关节真值",
+        "bounded_failure_recovery": "分机构选择轨迹；停滞或意外接触时撤离重估",
+        "acceptance_tests": "左右铰链、上下翻、双门、多把手；滑门另走 A11"
+      },
+      "applications": "橱柜门、冰箱门、微波炉门、烤箱门、洗碗机门；厨师机机头；电热水壶铰接盖。",
+      "source_training_examples": [
+        "OpenCabinet",
+        "CloseFridge",
+        "OpenOven",
+        "OpenStandMixerHead",
+        "CloseElectricKettleLid"
+      ],
+      "execution_mode": "learned_code",
+      "execution_owner": "skill_executor",
+      "entrypoint": "skill(api, params) -> dict",
+      "implemented": false
+    },
+    "A11": {
+      "id": "A11",
+      "name": "slide_joint",
+      "label": "滑轨推拉",
+      "layer": "action",
+      "family": "articulation_lids",
+      "summary": "沿导轨方向推拉，使目标达到指定伸出量或位置；检查前置门状态、沿途阻挡和架上物品稳定性。",
+      "description": "A11 slide_joint（滑轨推拉）\n沿导轨方向推拉，使目标达到指定伸出量或位置；检查前置门状态、沿途阻挡和架上物品稳定性。\n语义接口：slide_joint(target, direction, travel)。实际执行统一使用 skill(api, params)，这些参数放入 params。\n支持变体：抽屉、冰箱抽屉、洗碗架、烤箱架、小烤箱托盘；可识别的滑门变体\n前置条件：滑轨方向已识别；必要的前置门已打开\n完成效果：目标沿轨道到指定开度/位置\n可观测检查：轨道方向位移与端点观察；检查是否拉错目标\n有限恢复：堵塞时停止，不继续增力；重新对齐把手\n待验收维度：推/拉、左右抽屉、多层架、受门阻挡和托盘装载\n参数：target：由当前观测绑定的目标实体、位置或关系。；direction：direction：由当前观测绑定，含义参见语义接口 slide_joint(target, direction, travel)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；travel：沿导轨的行程，明确米或归一化开度，禁止混用。\n运行职责：通过已暴露的 api 和已发布 P/A/C依赖实现；观察、动作、效果诊断与有限恢复共享 host 预算。返回 status/evidence/phase 等诊断不得替代 host 验证。\n验证边界：仅使用 host 已暴露的 rail/rack joint/level 判据，不能虚构滑轨状态接口。 仅使用 supported_predicates；没有匹配的独立判据时返回 unknown/说明阻塞，不伪造成功。native_success 只用于真正完成整任务的最后一步。\n应用示例：普通抽屉、冰箱抽屉、洗碗机架、烤箱架、小烤箱托盘；滑门变体。 这是需求设计，不是实现或实测覆盖证明。",
+      "parameters": {
+        "target": {
+          "required": false,
+          "recommended": true,
+          "description": "由当前观测绑定的目标实体、位置或关系。"
+        },
+        "direction": {
+          "required": false,
+          "recommended": true,
+          "description": "direction：由当前观测绑定，含义参见语义接口 slide_joint(target, direction, travel)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "travel": {
+          "required": false,
+          "recommended": true,
+          "description": "沿导轨的行程，明确米或归一化开度，禁止混用。"
+        }
+      },
+      "semantic_signature": "slide_joint(target, direction, travel)",
+      "contract": {
+        "variants": "抽屉、冰箱抽屉、洗碗架、烤箱架、小烤箱托盘；可识别的滑门变体",
+        "preconditions": "滑轨方向已识别；必要的前置门已打开",
+        "effects": "目标沿轨道到指定开度/位置",
+        "observable_verification": "轨道方向位移与端点观察；检查是否拉错目标",
+        "bounded_failure_recovery": "堵塞时停止，不继续增力；重新对齐把手",
+        "acceptance_tests": "推/拉、左右抽屉、多层架、受门阻挡和托盘装载"
+      },
+      "applications": "普通抽屉、冰箱抽屉、洗碗机架、烤箱架、小烤箱托盘；滑门变体。",
+      "source_training_examples": [
+        "OpenDrawer",
+        "CloseFridgeDrawer",
+        "SlideDishwasherRack",
+        "SlideOvenRack"
+      ],
+      "execution_mode": "learned_code",
+      "execution_owner": "skill_executor",
+      "entrypoint": "skill(api, params) -> dict",
+      "implemented": false
+    },
+    "A12": {
+      "id": "A12",
+      "name": "detach_seat_lid",
+      "label": "可拆盖取放与盖合",
+      "layer": "action",
+      "family": "articulation_lids",
+      "summary": "将可拆盖取下并暂存，或对准开口重新盖合；开盖后确认开口可用，盖合后确认正确落座并释放。",
+      "description": "A12 detach_seat_lid（可拆盖取放与盖合）\n将可拆盖取下并暂存，或对准开口重新盖合；开盖后确认开口可用，盖合后确认正确落座并释放。\n语义接口：detach_seat_lid(lid, vessel, mode, parking_region)。实际执行统一使用 skill(api, params)，这些参数放入 params。\n支持变体：搅拌机自由盖；取下后暂存和重新盖合\n前置条件：盖子与杯口已识别；可拆结构而非铰接结构\n完成效果：开盖时杯口可用且盖子放稳；盖合时正确落座并释放\n可观测检查：杯口遮挡状态、盖子相对姿态与落座后稳定性\n有限恢复：偏盖时提起重对齐；不将盖子悬停当作盖合\n待验收维度：自由盖、取下/装回、停车位置；与铰接壶盖分开验收\n参数：lid：lid：由当前观测绑定，含义参见语义接口 detach_seat_lid(lid, vessel, mode, parking_region)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；vessel：vessel：由当前观测绑定，含义参见语义接口 detach_seat_lid(lid, vessel, mode, parking_region)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；mode：取下或盖合等操作模式，当前任务重新绑定。；parking_region：parking_region：由当前观测绑定，含义参见语义接口 detach_seat_lid(lid, vessel, mode, parking_region)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。\n运行职责：通过已暴露的 api 和已发布 P/A/C依赖实现；观察、动作、效果诊断与有限恢复共享 host 预算。返回 status/evidence/phase 等诊断不得替代 host 验证。\n验证边界：可拆盖可能不是 object_grasped 支持的物体；需要匹配的分离/暂存/落座效果证据。 仅使用 supported_predicates；没有匹配的独立判据时返回 unknown/说明阻塞，不伪造成功。native_success 只用于真正完成整任务的最后一步。\n应用示例：搅拌机开盖、盖合；放入食材后重新盖上搅拌机盖。 这是需求设计，不是实现或实测覆盖证明。",
+      "parameters": {
+        "lid": {
+          "required": false,
+          "recommended": true,
+          "description": "lid：由当前观测绑定，含义参见语义接口 detach_seat_lid(lid, vessel, mode, parking_region)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "vessel": {
+          "required": false,
+          "recommended": true,
+          "description": "vessel：由当前观测绑定，含义参见语义接口 detach_seat_lid(lid, vessel, mode, parking_region)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "mode": {
+          "required": false,
+          "recommended": true,
+          "description": "取下或盖合等操作模式，当前任务重新绑定。"
+        },
+        "parking_region": {
+          "required": false,
+          "recommended": true,
+          "description": "parking_region：由当前观测绑定，含义参见语义接口 detach_seat_lid(lid, vessel, mode, parking_region)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        }
+      },
+      "semantic_signature": "detach_seat_lid(lid, vessel, mode, parking_region)",
+      "contract": {
+        "variants": "搅拌机自由盖；取下后暂存和重新盖合",
+        "preconditions": "盖子与杯口已识别；可拆结构而非铰接结构",
+        "effects": "开盖时杯口可用且盖子放稳；盖合时正确落座并释放",
+        "observable_verification": "杯口遮挡状态、盖子相对姿态与落座后稳定性",
+        "bounded_failure_recovery": "偏盖时提起重对齐；不将盖子悬停当作盖合",
+        "acceptance_tests": "自由盖、取下/装回、停车位置；与铰接壶盖分开验收"
+      },
+      "applications": "搅拌机开盖、盖合；放入食材后重新盖上搅拌机盖。",
+      "source_training_examples": [
+        "OpenBlenderLid",
+        "CloseBlenderLid",
+        "BlendIngredients",
+        "BlendMarinade"
+      ],
+      "execution_mode": "learned_code",
+      "execution_owner": "skill_executor",
+      "entrypoint": "skill(api, params) -> dict",
+      "implemented": false
+    },
+    "A13": {
+      "id": "A13",
+      "name": "press_button",
+      "label": "按钮按压",
+      "layer": "action",
+      "family": "controls",
+      "summary": "定位正确按钮，沿有效方向完成按压、释放和撤手；结合设备响应检查效果，无响应时有限重试。",
+      "description": "A13 press_button（按钮按压）\n定位正确按钮，沿有效方向完成按压、释放和撤手；结合设备响应检查效果，无响应时有限重试。\n语义接口：press_button(control, approach, stroke, release)。实际执行统一使用 skill(api, params)，这些参数放入 params。\n支持变体：微波炉启动/停止、咖啡机、搅拌机、电热壶开盖按钮\n前置条件：按钮已定位，控制含义明确且可达\n完成效果：目标设备状态改变，手已撤离按钮\n可观测检查：按压位移和设备视觉状态；必要时等待可观测响应\n有限恢复：有限重复按压；持续无响应返回 unknown，不调用成功 oracle\n待验收维度：小按钮、不同朝向、按下后回弹、设备前置条件缺失\n参数：control：control：由当前观测绑定，含义参见语义接口 press_button(control, approach, stroke, release)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；approach：approach：由当前观测绑定，含义参见语义接口 press_button(control, approach, stroke, release)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；stroke：stroke：由当前观测绑定，含义参见语义接口 press_button(control, approach, stroke, release)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；release：是否以及何时释放/撤离；服从该能力的结束条件。\n运行职责：通过已暴露的 api 和已发布 P/A/C依赖实现；观察、动作、效果诊断与有限恢复共享 host 预算。返回 status/evidence/phase 等诊断不得替代 host 验证。\n验证边界：设备效果不等于 TCP 到达；fixture_state 只支持已暴露的 boolean getter。 仅使用 supported_predicates；没有匹配的独立判据时返回 unknown/说明阻塞，不伪造成功。native_success 只用于真正完成整任务的最后一步。\n应用示例：微波炉启动与停止；咖啡机、搅拌机按钮；电热水壶开盖按钮。 这是需求设计，不是实现或实测覆盖证明。",
+      "parameters": {
+        "control": {
+          "required": false,
+          "recommended": true,
+          "description": "control：由当前观测绑定，含义参见语义接口 press_button(control, approach, stroke, release)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "approach": {
+          "required": false,
+          "recommended": true,
+          "description": "approach：由当前观测绑定，含义参见语义接口 press_button(control, approach, stroke, release)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "stroke": {
+          "required": false,
+          "recommended": true,
+          "description": "stroke：由当前观测绑定，含义参见语义接口 press_button(control, approach, stroke, release)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "release": {
+          "required": false,
+          "recommended": true,
+          "description": "是否以及何时释放/撤离；服从该能力的结束条件。"
+        }
+      },
+      "semantic_signature": "press_button(control, approach, stroke, release)",
+      "contract": {
+        "variants": "微波炉启动/停止、咖啡机、搅拌机、电热壶开盖按钮",
+        "preconditions": "按钮已定位，控制含义明确且可达",
+        "effects": "目标设备状态改变，手已撤离按钮",
+        "observable_verification": "按压位移和设备视觉状态；必要时等待可观测响应",
+        "bounded_failure_recovery": "有限重复按压；持续无响应返回 unknown，不调用成功 oracle",
+        "acceptance_tests": "小按钮、不同朝向、按下后回弹、设备前置条件缺失"
+      },
+      "applications": "微波炉启动与停止；咖啡机、搅拌机按钮；电热水壶开盖按钮。",
+      "source_training_examples": [
+        "TurnOnMicrowave",
+        "TurnOffMicrowave",
+        "StartCoffeeMachine",
+        "TurnOnBlender"
+      ],
+      "execution_mode": "learned_code",
+      "execution_owner": "skill_executor",
+      "entrypoint": "skill(api, params) -> dict",
+      "implemented": false
+    },
+    "A14": {
+      "id": "A14",
+      "name": "toggle_lever",
+      "label": "拨杆与短行程开关",
+      "layer": "action",
+      "family": "controls",
+      "summary": "沿允许方向拨动或压下控制杆，使其达到目标位置或开关状态；观察保持、回弹和设备响应。",
+      "description": "A14 toggle_lever（拨杆与短行程开关）\n沿允许方向拨动或压下控制杆，使其达到目标位置或开关状态；观察保持、回弹和设备响应。\n语义接口：toggle_lever(control, target_state, direction)。实际执行统一使用 skill(api, params)，这些参数放入 params。\n支持变体：吐司机启动杆、电热水壶电源拨杆\n前置条件：受力方向和目标状态已识别\n完成效果：拨杆与设备进入目标状态\n可观测检查：拨杆位置、回弹和电源状态的视觉线索\n有限恢复：限制行程；启动后按任务等待弹起，避免反复干扰\n待验收维度：不同杆长、下压方向、保持与弹起状态\n参数：control：control：由当前观测绑定，含义参见语义接口 toggle_lever(control, target_state, direction)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；target_state：target_state：由当前观测绑定，含义参见语义接口 toggle_lever(control, target_state, direction)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；direction：direction：由当前观测绑定，含义参见语义接口 toggle_lever(control, target_state, direction)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。\n运行职责：通过已暴露的 api 和已发布 P/A/C依赖实现；观察、动作、效果诊断与有限恢复共享 host 预算。返回 status/evidence/phase 等诊断不得替代 host 验证。\n验证边界：杆到位、保持或回弹与设备效果要分别按任务检查。 仅使用 supported_predicates；没有匹配的独立判据时返回 unknown/说明阻塞，不伪造成功。native_success 只用于真正完成整任务的最后一步。\n应用示例：吐司机启动压杆；电热水壶电源拨杆。 这是需求设计，不是实现或实测覆盖证明。",
+      "parameters": {
+        "control": {
+          "required": false,
+          "recommended": true,
+          "description": "control：由当前观测绑定，含义参见语义接口 toggle_lever(control, target_state, direction)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "target_state": {
+          "required": false,
+          "recommended": true,
+          "description": "target_state：由当前观测绑定，含义参见语义接口 toggle_lever(control, target_state, direction)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "direction": {
+          "required": false,
+          "recommended": true,
+          "description": "direction：由当前观测绑定，含义参见语义接口 toggle_lever(control, target_state, direction)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        }
+      },
+      "semantic_signature": "toggle_lever(control, target_state, direction)",
+      "contract": {
+        "variants": "吐司机启动杆、电热水壶电源拨杆",
+        "preconditions": "受力方向和目标状态已识别",
+        "effects": "拨杆与设备进入目标状态",
+        "observable_verification": "拨杆位置、回弹和电源状态的视觉线索",
+        "bounded_failure_recovery": "限制行程；启动后按任务等待弹起，避免反复干扰",
+        "acceptance_tests": "不同杆长、下压方向、保持与弹起状态"
+      },
+      "applications": "吐司机启动压杆；电热水壶电源拨杆。",
+      "source_training_examples": [
+        "TurnOnToaster",
+        "TurnOnElectricKettle",
+        "GetToastedBread",
+        "StartElectricKettle"
+      ],
+      "execution_mode": "learned_code",
+      "execution_owner": "skill_executor",
+      "entrypoint": "skill(api, params) -> dict",
+      "implemented": false
+    },
+    "A15": {
+      "id": "A15",
+      "name": "turn_control",
+      "label": "旋钮与水龙头手柄调节",
+      "layer": "action",
+      "family": "controls",
+      "summary": "识别控制件及对应设备，调节到目标开关、档位、角度或区间；渐进调整并观察设备状态。",
+      "description": "A15 turn_control（旋钮与水龙头手柄调节）\n识别控制件及对应设备，调节到目标开关、档位、角度或区间；渐进调整并观察设备状态。\n语义接口：turn_control(control, goal_state, direction, range)。实际执行统一使用 skill(api, params)，这些参数放入 params。\n支持变体：炉头开关/火力、小烤箱温度/定时器、烤箱预热、龙头水流/水温、厨师机速度\n前置条件：识别正确控制件及其和设备/炉头的对应关系\n完成效果：设备达到指定开关、档位或调节范围\n可观测检查：旋钮/手柄姿态、指示线、水流、火焰或状态指示；渐进调整\n有限恢复：未知档位先观察；水温动作保持出水；限制转角和尝试次数\n待验收维度：不同控制件和转向、连续档位、左右水温、炉头对应关系\n参数：control：control：由当前观测绑定，含义参见语义接口 turn_control(control, goal_state, direction, range)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；goal_state：goal_state：由当前观测绑定，含义参见语义接口 turn_control(control, goal_state, direction, range)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；direction：direction：由当前观测绑定，含义参见语义接口 turn_control(control, goal_state, direction, range)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；range：range：由当前观测绑定，含义参见语义接口 turn_control(control, goal_state, direction, range)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。\n运行职责：通过已暴露的 api 和已发布 P/A/C依赖实现；观察、动作、效果诊断与有限恢复共享 host 预算。返回 status/evidence/phase 等诊断不得替代 host 验证。\n验证边界：数字温度、速度档位或水温枚举不自动受 fixture_state 支持；不能虚构 getter。 仅使用 supported_predicates；没有匹配的独立判据时返回 unknown/说明阻塞，不伪造成功。native_success 只用于真正完成整任务的最后一步。\n应用示例：炉头开关及火力；烤箱温度；小烤箱定时；水龙头水流与水温；厨师机速度。 这是需求设计，不是实现或实测覆盖证明。",
+      "parameters": {
+        "control": {
+          "required": false,
+          "recommended": true,
+          "description": "control：由当前观测绑定，含义参见语义接口 turn_control(control, goal_state, direction, range)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "goal_state": {
+          "required": false,
+          "recommended": true,
+          "description": "goal_state：由当前观测绑定，含义参见语义接口 turn_control(control, goal_state, direction, range)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "direction": {
+          "required": false,
+          "recommended": true,
+          "description": "direction：由当前观测绑定，含义参见语义接口 turn_control(control, goal_state, direction, range)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "range": {
+          "required": false,
+          "recommended": true,
+          "description": "range：由当前观测绑定，含义参见语义接口 turn_control(control, goal_state, direction, range)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        }
+      },
+      "semantic_signature": "turn_control(control, goal_state, direction, range)",
+      "contract": {
+        "variants": "炉头开关/火力、小烤箱温度/定时器、烤箱预热、龙头水流/水温、厨师机速度",
+        "preconditions": "识别正确控制件及其和设备/炉头的对应关系",
+        "effects": "设备达到指定开关、档位或调节范围",
+        "observable_verification": "旋钮/手柄姿态、指示线、水流、火焰或状态指示；渐进调整",
+        "bounded_failure_recovery": "未知档位先观察；水温动作保持出水；限制转角和尝试次数",
+        "acceptance_tests": "不同控制件和转向、连续档位、左右水温、炉头对应关系"
+      },
+      "applications": "炉头开关及火力；烤箱温度；小烤箱定时；水龙头水流与水温；厨师机速度。",
+      "source_training_examples": [
+        "AdjustWaterTemperature",
+        "TurnOnStove",
+        "LowerHeat",
+        "PreheatOven",
+        "MixCakeFrosting"
+      ],
+      "execution_mode": "learned_code",
+      "execution_owner": "skill_executor",
+      "entrypoint": "skill(api, params) -> dict",
+      "implemented": false
+    },
+    "A16": {
+      "id": "A16",
+      "name": "sweep_spout",
+      "label": "出水嘴转向与区域覆盖",
+      "layer": "action",
+      "family": "controls",
+      "summary": "调整出水嘴到指定方向，或依次覆盖多个区域；任务要求保持出水时维持水流，并记录已覆盖区域。",
+      "description": "A16 sweep_spout（出水嘴转向与区域覆盖）\n调整出水嘴到指定方向，或依次覆盖多个区域；任务要求保持出水时维持水流，并记录已覆盖区域。\n语义接口：sweep_spout(spout, regions, keep_water_on)。实际执行统一使用 skill(api, params)，这些参数放入 params。\n支持变体：水槽左、中、右；维持出水时转向\n前置条件：出水嘴和覆盖区域已识别；仅在 keep_water_on 或覆盖任务要求时水流必须已开启。\n完成效果：水流依次覆盖要求区域并记录已覆盖集合\n可观测检查：出水嘴方向和水流落点；重观察避免漏区\n有限恢复：未覆盖区域有限补扫；水流中断则恢复再检查\n待验收维度：不同水槽几何、起始方向和覆盖顺序\n参数：spout：spout：由当前观测绑定，含义参见语义接口 sweep_spout(spout, regions, keep_water_on)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；regions：regions：由当前观测绑定，含义参见语义接口 sweep_spout(spout, regions, keep_water_on)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；keep_water_on：是否要求动作期间持续出水；只在任务需要时成立。\n运行职责：通过已暴露的 api 和已发布 P/A/C依赖实现；观察、动作、效果诊断与有限恢复共享 host 预算。返回 status/evidence/phase 等诊断不得替代 host 验证。\n验证边界：水开关状态不证明出水嘴方向、落点或覆盖集合。 仅使用 supported_predicates；没有匹配的独立判据时返回 unknown/说明阻塞，不伪造成功。native_success 只用于真正完成整任务的最后一步。\n应用示例：出水嘴朝左、中、右；冲洗不同水槽区域。 这是需求设计，不是实现或实测覆盖证明。",
+      "parameters": {
+        "spout": {
+          "required": false,
+          "recommended": true,
+          "description": "spout：由当前观测绑定，含义参见语义接口 sweep_spout(spout, regions, keep_water_on)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "regions": {
+          "required": false,
+          "recommended": true,
+          "description": "regions：由当前观测绑定，含义参见语义接口 sweep_spout(spout, regions, keep_water_on)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "keep_water_on": {
+          "required": false,
+          "recommended": true,
+          "description": "是否要求动作期间持续出水；只在任务需要时成立。"
+        }
+      },
+      "semantic_signature": "sweep_spout(spout, regions, keep_water_on)",
+      "contract": {
+        "variants": "水槽左、中、右；维持出水时转向",
+        "preconditions": "出水嘴和覆盖区域已识别；仅在 keep_water_on 或覆盖任务要求时水流必须已开启。",
+        "effects": "水流依次覆盖要求区域并记录已覆盖集合",
+        "observable_verification": "出水嘴方向和水流落点；重观察避免漏区",
+        "bounded_failure_recovery": "未覆盖区域有限补扫；水流中断则恢复再检查",
+        "acceptance_tests": "不同水槽几何、起始方向和覆盖顺序"
+      },
+      "applications": "出水嘴朝左、中、右；冲洗不同水槽区域。",
+      "source_training_examples": [
+        "TurnSinkSpout",
+        "RinseSinkBasin"
+      ],
+      "execution_mode": "learned_code",
+      "execution_owner": "skill_executor",
+      "entrypoint": "skill(api, params) -> dict",
+      "implemented": false
+    },
+    "A17": {
+      "id": "A17",
+      "name": "tilt_preserve",
+      "label": "保留内容物的受控倾斜",
+      "layer": "action",
+      "family": "container_motion",
+      "summary": "对抓稳的容器执行有界倾斜和保持，使内容物发生要求的移动但不掉出；随后恢复安全姿态并放回目标支撑。",
+      "description": "A17 tilt_preserve（保留内容物的受控倾斜）\n对抓稳的容器执行有界倾斜和保持，使内容物发生要求的移动但不掉出；随后恢复安全姿态并放回目标支撑。\n语义接口：tilt_preserve(container, angle, duration, return_pose)。实际执行统一使用 skill(api, params)，这些参数放入 params。\n支持变体：倾斜锅具使内容物移动，但不倒出\n前置条件：容器抓稳，内容物已观察，倾斜空间可用\n完成效果：发生规定倾斜，内容物保留，容器回到安全支撑\n可观测检查：可观测姿态变化、内容物仍在容器中、最终支撑关系\n有限恢复：限制角度与时长；内容物接近边缘则复位\n待验收维度：锅柄与负载变化、倾斜方向、返回炉头和防洒落\n参数：container：当前持有的容器及可观测内容物约束。；angle：倾斜角度，单位弧度；明确转轴及坐标系。；duration：有效作用时长，单位秒；不能用无接触的等待代替。；return_pose：return_pose：由当前观测绑定，含义参见语义接口 tilt_preserve(container, angle, duration, return_pose)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。\n运行职责：通过已暴露的 api 和已发布 P/A/C依赖实现；观察、动作、效果诊断与有限恢复共享 host 预算。返回 status/evidence/phase 等诊断不得替代 host 验证。\n验证边界：发出倾斜命令不证明内容物保留或最终放回；不能当作倒料。 仅使用 supported_predicates；没有匹配的独立判据时返回 unknown/说明阻塞，不伪造成功。native_success 只用于真正完成整任务的最后一步。\n应用示例：`TiltPan`：倾斜平底锅移动锅内食材，再将锅放回炉头。 这是需求设计，不是实现或实测覆盖证明。",
+      "parameters": {
+        "container": {
+          "required": false,
+          "recommended": true,
+          "description": "当前持有的容器及可观测内容物约束。"
+        },
+        "angle": {
+          "required": false,
+          "recommended": true,
+          "description": "倾斜角度，单位弧度；明确转轴及坐标系。"
+        },
+        "duration": {
+          "required": false,
+          "recommended": true,
+          "description": "有效作用时长，单位秒；不能用无接触的等待代替。"
+        },
+        "return_pose": {
+          "required": false,
+          "recommended": true,
+          "description": "return_pose：由当前观测绑定，含义参见语义接口 tilt_preserve(container, angle, duration, return_pose)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        }
+      },
+      "semantic_signature": "tilt_preserve(container, angle, duration, return_pose)",
+      "contract": {
+        "variants": "倾斜锅具使内容物移动，但不倒出",
+        "preconditions": "容器抓稳，内容物已观察，倾斜空间可用",
+        "effects": "发生规定倾斜，内容物保留，容器回到安全支撑",
+        "observable_verification": "可观测姿态变化、内容物仍在容器中、最终支撑关系",
+        "bounded_failure_recovery": "限制角度与时长；内容物接近边缘则复位",
+        "acceptance_tests": "锅柄与负载变化、倾斜方向、返回炉头和防洒落"
+      },
+      "applications": "`TiltPan`：倾斜平底锅移动锅内食材，再将锅放回炉头。",
+      "source_training_examples": [
+        "TiltPan"
+      ],
+      "execution_mode": "learned_code",
+      "execution_owner": "skill_executor",
+      "entrypoint": "skill(api, params) -> dict",
+      "implemented": false
+    },
+    "A18": {
+      "id": "A18",
+      "name": "dump_contents",
+      "label": "倒料与容器清空",
+      "layer": "action",
+      "family": "container_motion",
+      "summary": "对准承接区域，将指定内容物倒出原容器，检查清空及去向，再按任务恢复容器姿态或放回。",
+      "description": "A18 dump_contents（倒料与容器清空）\n对准承接区域，将指定内容物倒出原容器，检查清空及去向，再按任务恢复容器姿态或放回。\n语义接口：dump_contents(container, destination, return_pose)。实际执行统一使用 skill(api, params)，这些参数放入 params。\n支持变体：锅中蔬菜倒入水槽、碗中剩菜倒出；不假设真实连续流体仿真\n前置条件：容器已抓稳；目标承接区域可用\n完成效果：指定内容物离开原容器并进入要求区域，容器按要求放回\n可观测检查：倾倒前后内容物集合与位置变化，复查剩余物\n有限恢复：小步增大倾角；物体卡住时停止或改用逐件取出方案\n待验收维度：不同开口、装载量和目标区域；对比 A17 的保留约束\n参数：container：当前持有的容器及可观测内容物约束。；destination：destination：由当前观测绑定，含义参见语义接口 dump_contents(container, destination, return_pose)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；return_pose：return_pose：由当前观测绑定，含义参见语义接口 dump_contents(container, destination, return_pose)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。\n运行职责：通过已暴露的 api 和已发布 P/A/C依赖实现；观察、动作、效果诊断与有限恢复共享 host 预算。返回 status/evidence/phase 等诊断不得替代 host 验证。\n验证边界：原容器清空与内容物进入目标是不同效果；不假设连续流体仿真。 仅使用 supported_predicates；没有匹配的独立判据时返回 unknown/说明阻塞，不伪造成功。native_success 只用于真正完成整任务的最后一步。\n应用示例：`DrainVeggies`：把蔬菜倒入水槽；`DumpLeftovers`：清空碗内剩菜。 这是需求设计，不是实现或实测覆盖证明。",
+      "parameters": {
+        "container": {
+          "required": false,
+          "recommended": true,
+          "description": "当前持有的容器及可观测内容物约束。"
+        },
+        "destination": {
+          "required": false,
+          "recommended": true,
+          "description": "destination：由当前观测绑定，含义参见语义接口 dump_contents(container, destination, return_pose)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "return_pose": {
+          "required": false,
+          "recommended": true,
+          "description": "return_pose：由当前观测绑定，含义参见语义接口 dump_contents(container, destination, return_pose)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        }
+      },
+      "semantic_signature": "dump_contents(container, destination, return_pose)",
+      "contract": {
+        "variants": "锅中蔬菜倒入水槽、碗中剩菜倒出；不假设真实连续流体仿真",
+        "preconditions": "容器已抓稳；目标承接区域可用",
+        "effects": "指定内容物离开原容器并进入要求区域，容器按要求放回",
+        "observable_verification": "倾倒前后内容物集合与位置变化，复查剩余物",
+        "bounded_failure_recovery": "小步增大倾角；物体卡住时停止或改用逐件取出方案",
+        "acceptance_tests": "不同开口、装载量和目标区域；对比 A17 的保留约束"
+      },
+      "applications": "`DrainVeggies`：把蔬菜倒入水槽；`DumpLeftovers`：清空碗内剩菜。",
+      "source_training_examples": [
+        "DrainVeggies",
+        "DumpLeftovers"
+      ],
+      "execution_mode": "learned_code",
+      "execution_owner": "skill_executor",
+      "entrypoint": "skill(api, params) -> dict",
+      "implemented": false
+    },
+    "A19": {
+      "id": "A19",
+      "name": "shake_container",
+      "label": "持物摇动与回放",
+      "layer": "action",
+      "family": "container_motion",
+      "summary": "对容器执行受控往复运动，达到要求的运动量或持续时间；保持内容物受控，结束后放回目标支撑。",
+      "description": "A19 shake_container（持物摇动与回放）\n对容器执行受控往复运动，达到要求的运动量或持续时间；保持内容物受控，结束后放回目标支撑。\n语义接口：shake_container(container, motion_limits, duration, return_goal)。实际执行统一使用 skill(api, params)，这些参数放入 params。\n支持变体：持锅轻摇，移动内容物并回放到炉头\n前置条件：抓稳容器；摇动范围不会撞击环境或洒出内容物\n完成效果：产生有效反复运动，内容物保留，容器回到目标支撑\n可观测检查：容器运动轨迹、内容物位置与最终支撑状态\n有限恢复：限制幅度、速度与次数；异常滑落立刻停止\n待验收维度：不同锅柄、负载和运动方向；防止把静止悬停当摇动\n参数：container：当前持有的容器及可观测内容物约束。；motion_limits：motion_limits：由当前观测绑定，含义参见语义接口 shake_container(container, motion_limits, duration, return_goal)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；duration：有效作用时长，单位秒；不能用无接触的等待代替。；return_goal：return_goal：由当前观测绑定，含义参见语义接口 shake_container(container, motion_limits, duration, return_goal)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。\n运行职责：通过已暴露的 api 和已发布 P/A/C依赖实现；观察、动作、效果诊断与有限恢复共享 host 预算。返回 status/evidence/phase 等诊断不得替代 host 验证。\n验证边界：发出往复命令不证明有效容器运动、内容物保留或最终放回。 仅使用 supported_predicates；没有匹配的独立判据时返回 unknown/说明阻塞，不伪造成功。native_success 只用于真正完成整任务的最后一步。\n应用示例：`ShakePan`：轻摇锅具，使锅内食材移动，再把锅放回炉头。 这是需求设计，不是实现或实测覆盖证明。",
+      "parameters": {
+        "container": {
+          "required": false,
+          "recommended": true,
+          "description": "当前持有的容器及可观测内容物约束。"
+        },
+        "motion_limits": {
+          "required": false,
+          "recommended": true,
+          "description": "motion_limits：由当前观测绑定，含义参见语义接口 shake_container(container, motion_limits, duration, return_goal)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "duration": {
+          "required": false,
+          "recommended": true,
+          "description": "有效作用时长，单位秒；不能用无接触的等待代替。"
+        },
+        "return_goal": {
+          "required": false,
+          "recommended": true,
+          "description": "return_goal：由当前观测绑定，含义参见语义接口 shake_container(container, motion_limits, duration, return_goal)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        }
+      },
+      "semantic_signature": "shake_container(container, motion_limits, duration, return_goal)",
+      "contract": {
+        "variants": "持锅轻摇，移动内容物并回放到炉头",
+        "preconditions": "抓稳容器；摇动范围不会撞击环境或洒出内容物",
+        "effects": "产生有效反复运动，内容物保留，容器回到目标支撑",
+        "observable_verification": "容器运动轨迹、内容物位置与最终支撑状态",
+        "bounded_failure_recovery": "限制幅度、速度与次数；异常滑落立刻停止",
+        "acceptance_tests": "不同锅柄、负载和运动方向；防止把静止悬停当摇动"
+      },
+      "applications": "`ShakePan`：轻摇锅具，使锅内食材移动，再把锅放回炉头。",
+      "source_training_examples": [
+        "ShakePan"
+      ],
+      "execution_mode": "learned_code",
+      "execution_owner": "skill_executor",
+      "entrypoint": "skill(api, params) -> dict",
+      "implemented": false
+    },
+    "A20": {
+      "id": "A20",
+      "name": "press_contact",
+      "label": "定向接触与持续压持",
+      "layer": "action",
+      "family": "tool_contact",
+      "summary": "使已持工具或物体的正确接触面朝向目标，建立并保持足够时长的接触；限制压入距离，按任务释放或撤离。",
+      "description": "A20 press_contact（定向接触与持续压持）\n使已持工具或物体的正确接触面朝向目标，建立并保持足够时长的接触；限制压入距离，按任务释放或撤离。\n语义接口：press_contact(held_item, target, face, duration)。实际执行统一使用 skill(api, params)，这些参数放入 params。\n支持变体：锅铲压鸡肉；水果切面压榨汁锥\n前置条件：接触面与方向已识别；目标或工具抓握稳定\n完成效果：正确面发生足够时长的接触，按任务释放/撤离\n可观测检查：视觉接触几何、机器人受限位移和时间记录；姿态持续复查\n有限恢复：限制压入距离；不能确认接触则调整方向，不盲目增力\n待验收维度：软/硬目标、工具面、持续接触中断、切面朝向\n参数：held_item：held_item：由当前观测绑定，含义参见语义接口 press_contact(held_item, target, face, duration)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；target：由当前观测绑定的目标实体、位置或关系。；face：face：由当前观测绑定，含义参见语义接口 press_contact(held_item, target, face, duration)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；duration：有效作用时长，单位秒；不能用无接触的等待代替。\n运行职责：通过已暴露的 api 和已发布 P/A/C依赖实现；观察、动作、效果诊断与有限恢复共享 host 预算。返回 status/evidence/phase 等诊断不得替代 host 验证。\n验证边界：TCP 位置不证明正确接触面、有效接触和持续压持。 仅使用 supported_predicates；没有匹配的独立判据时返回 unknown/说明阻塞，不伪造成功。native_success 只用于真正完成整任务的最后一步。\n应用示例：锅铲压鸡肉；水果切面朝下压榨汁锥。 这是需求设计，不是实现或实测覆盖证明。",
+      "parameters": {
+        "held_item": {
+          "required": false,
+          "recommended": true,
+          "description": "held_item：由当前观测绑定，含义参见语义接口 press_contact(held_item, target, face, duration)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "target": {
+          "required": false,
+          "recommended": true,
+          "description": "由当前观测绑定的目标实体、位置或关系。"
+        },
+        "face": {
+          "required": false,
+          "recommended": true,
+          "description": "face：由当前观测绑定，含义参见语义接口 press_contact(held_item, target, face, duration)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "duration": {
+          "required": false,
+          "recommended": true,
+          "description": "有效作用时长，单位秒；不能用无接触的等待代替。"
+        }
+      },
+      "semantic_signature": "press_contact(held_item, target, face, duration)",
+      "contract": {
+        "variants": "锅铲压鸡肉；水果切面压榨汁锥",
+        "preconditions": "接触面与方向已识别；目标或工具抓握稳定",
+        "effects": "正确面发生足够时长的接触，按任务释放/撤离",
+        "observable_verification": "视觉接触几何、机器人受限位移和时间记录；姿态持续复查",
+        "bounded_failure_recovery": "限制压入距离；不能确认接触则调整方向，不盲目增力",
+        "acceptance_tests": "软/硬目标、工具面、持续接触中断、切面朝向"
+      },
+      "applications": "锅铲压鸡肉；水果切面朝下压榨汁锥。",
+      "source_training_examples": [
+        "PressChicken",
+        "JuiceFruitReamer"
+      ],
+      "execution_mode": "learned_code",
+      "execution_owner": "skill_executor",
+      "entrypoint": "skill(api, params) -> dict",
+      "implemented": false
+    },
+    "A21": {
+      "id": "A21",
+      "name": "scrub",
+      "label": "擦拭与刷洗覆盖",
+      "layer": "action",
+      "family": "tool_contact",
+      "summary": "使用已持工具与表面保持有效接触，完成要求的接触位置、覆盖范围和持续时间，随后释放撤离。",
+      "description": "A21 scrub（擦拭与刷洗覆盖）\n使用已持工具与表面保持有效接触，完成要求的接触位置、覆盖范围和持续时间，随后释放撤离。\n语义接口：scrub(tool, surface, path, coverage, duration)。实际执行统一使用 skill(api, params)，这些参数放入 params。\n支持变体：海绵擦砧板、海绵刷碗；平面与曲面\n前置条件：工具已抓稳；待清洁表面可达\n完成效果：形成要求范围和持续性的有效接触，随后释放/撤离\n可观测检查：工具相对表面的接触轨迹、覆盖记录和目标稳定性\n有限恢复：接触丢失后重对齐；限制压入；不能仅在一个点悬停\n待验收维度：平面/曲面、不同区域、覆盖不足、擦拭中断与释放\n参数：tool：tool：由当前观测绑定，含义参见语义接口 scrub(tool, surface, path, coverage, duration)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；surface：surface：由当前观测绑定，含义参见语义接口 scrub(tool, surface, path, coverage, duration)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；path：path：由当前观测绑定，含义参见语义接口 scrub(tool, surface, path, coverage, duration)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；coverage：coverage：由当前观测绑定，含义参见语义接口 scrub(tool, surface, path, coverage, duration)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；duration：有效作用时长，单位秒；不能用无接触的等待代替。\n运行职责：通过已暴露的 api 和已发布 P/A/C依赖实现；观察、动作、效果诊断与有限恢复共享 host 预算。返回 status/evidence/phase 等诊断不得替代 host 验证。\n验证边界：经过时长或运动轨迹不等于有效接触/覆盖；需过程判据。 仅使用 supported_predicates；没有匹配的独立判据时返回 unknown/说明阻塞，不伪造成功。native_success 只用于真正完成整任务的最后一步。\n应用示例：海绵擦砧板；刷洗碗的曲面。 这是需求设计，不是实现或实测覆盖证明。",
+      "parameters": {
+        "tool": {
+          "required": false,
+          "recommended": true,
+          "description": "tool：由当前观测绑定，含义参见语义接口 scrub(tool, surface, path, coverage, duration)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "surface": {
+          "required": false,
+          "recommended": true,
+          "description": "surface：由当前观测绑定，含义参见语义接口 scrub(tool, surface, path, coverage, duration)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "path": {
+          "required": false,
+          "recommended": true,
+          "description": "path：由当前观测绑定，含义参见语义接口 scrub(tool, surface, path, coverage, duration)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "coverage": {
+          "required": false,
+          "recommended": true,
+          "description": "coverage：由当前观测绑定，含义参见语义接口 scrub(tool, surface, path, coverage, duration)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "duration": {
+          "required": false,
+          "recommended": true,
+          "description": "有效作用时长，单位秒；不能用无接触的等待代替。"
+        }
+      },
+      "semantic_signature": "scrub(tool, surface, path, coverage, duration)",
+      "contract": {
+        "variants": "海绵擦砧板、海绵刷碗；平面与曲面",
+        "preconditions": "工具已抓稳；待清洁表面可达",
+        "effects": "形成要求范围和持续性的有效接触，随后释放/撤离",
+        "observable_verification": "工具相对表面的接触轨迹、覆盖记录和目标稳定性",
+        "bounded_failure_recovery": "接触丢失后重对齐；限制压入；不能仅在一个点悬停",
+        "acceptance_tests": "平面/曲面、不同区域、覆盖不足、擦拭中断与释放"
+      },
+      "applications": "海绵擦砧板；刷洗碗的曲面。",
+      "source_training_examples": [
+        "ScrubCuttingBoard",
+        "ScrubBowl"
+      ],
+      "execution_mode": "learned_code",
+      "execution_owner": "skill_executor",
+      "entrypoint": "skill(api, params) -> dict",
+      "implemented": false
+    },
+    "A22": {
+      "id": "A22",
+      "name": "stir",
+      "label": "工具搅动",
+      "layer": "action",
+      "family": "tool_contact",
+      "summary": "将已持工具伸入容器，与内容物有效接触并使其运动；完成有效搅动过程，同时保持食材仍在容器内。",
+      "description": "A22 stir（工具搅动）\n将已持工具伸入容器，与内容物有效接触并使其运动；完成有效搅动过程，同时保持食材仍在容器内。\n语义接口：stir(tool, receptacle, contents, path, duration)。实际执行统一使用 skill(api, params)，这些参数放入 params。\n支持变体：锅铲搅动锅内多个食材\n前置条件：食材已入锅，锅在所需位置，工具已抓稳\n完成效果：工具与内容物有效接触并使其运动，内容物仍留在锅内\n可观测检查：可观测工具接触、多个食材运动与包含关系；积累有效操作时间\n有限恢复：工具卡边或食材外溢则停止；不以锅上方挥动当作搅拌\n待验收维度：多食材、锅边避让、接触丢失和有效运动时长\n参数：tool：tool：由当前观测绑定，含义参见语义接口 stir(tool, receptacle, contents, path, duration)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；receptacle：receptacle：由当前观测绑定，含义参见语义接口 stir(tool, receptacle, contents, path, duration)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；contents：contents：由当前观测绑定，含义参见语义接口 stir(tool, receptacle, contents, path, duration)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；path：path：由当前观测绑定，含义参见语义接口 stir(tool, receptacle, contents, path, duration)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；duration：有效作用时长，单位秒；不能用无接触的等待代替。\n运行职责：通过已暴露的 api 和已发布 P/A/C依赖实现；观察、动作、效果诊断与有限恢复共享 host 预算。返回 status/evidence/phase 等诊断不得替代 host 验证。\n验证边界：自由空间画圆不等于有效搅动；需内容物接触/运动与保留证据。 仅使用 supported_predicates；没有匹配的独立判据时返回 unknown/说明阻塞，不伪造成功。native_success 只用于真正完成整任务的最后一步。\n应用示例：`StirVegetables`：用锅铲搅动锅内多份蔬菜。 这是需求设计，不是实现或实测覆盖证明。",
+      "parameters": {
+        "tool": {
+          "required": false,
+          "recommended": true,
+          "description": "tool：由当前观测绑定，含义参见语义接口 stir(tool, receptacle, contents, path, duration)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "receptacle": {
+          "required": false,
+          "recommended": true,
+          "description": "receptacle：由当前观测绑定，含义参见语义接口 stir(tool, receptacle, contents, path, duration)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "contents": {
+          "required": false,
+          "recommended": true,
+          "description": "contents：由当前观测绑定，含义参见语义接口 stir(tool, receptacle, contents, path, duration)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "path": {
+          "required": false,
+          "recommended": true,
+          "description": "path：由当前观测绑定，含义参见语义接口 stir(tool, receptacle, contents, path, duration)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "duration": {
+          "required": false,
+          "recommended": true,
+          "description": "有效作用时长，单位秒；不能用无接触的等待代替。"
+        }
+      },
+      "semantic_signature": "stir(tool, receptacle, contents, path, duration)",
+      "contract": {
+        "variants": "锅铲搅动锅内多个食材",
+        "preconditions": "食材已入锅，锅在所需位置，工具已抓稳",
+        "effects": "工具与内容物有效接触并使其运动，内容物仍留在锅内",
+        "observable_verification": "可观测工具接触、多个食材运动与包含关系；积累有效操作时间",
+        "bounded_failure_recovery": "工具卡边或食材外溢则停止；不以锅上方挥动当作搅拌",
+        "acceptance_tests": "多食材、锅边避让、接触丢失和有效运动时长"
+      },
+      "applications": "`StirVegetables`：用锅铲搅动锅内多份蔬菜。",
+      "source_training_examples": [
+        "StirVegetables"
+      ],
+      "execution_mode": "learned_code",
+      "execution_owner": "skill_executor",
+      "entrypoint": "skill(api, params) -> dict",
+      "implemented": false
+    },
+    "A23": {
+      "id": "A23",
+      "name": "rinse_hold",
+      "label": "流水下冲洗与浸润保持",
+      "layer": "action",
+      "family": "flow",
+      "summary": "在水流及水温条件满足时，将目标保持在有效水流区域，记录连续或累计作用时间；中断时按任务重计或暂停，随后放置或关水。",
+      "description": "A23 rinse_hold（流水下冲洗与浸润保持）\n在水流及水温条件满足时，将目标保持在有效水流区域，记录连续或累计作用时间；中断时按任务重计或暂停，随后放置或关水。\n语义接口：rinse_hold(object, flow, duration, temperature=None)。实际执行统一使用 skill(api, params)，这些参数放入 params。\n支持变体：鱼、生菜、碗、砧板、海绵；连续或累计有效冲洗\n前置条件：水流满足任务要求；物体可移动到水流或有效水槽区域\n完成效果：物体在有效水流下保持足够时间，之后按任务放置/关水\n可观测检查：图像中的水流与物体相对位置、可观测温度线索或规定设置、控制时钟\n有限恢复：脱离水流时按合同重计或暂停；未能确认条件时返回 unknown\n待验收维度：不同物体、水流区域、热水设置、连续/累计计时和关水顺序\n参数：object：当前场景中的目标对象绑定；不要硬编码仿真 ID 或世界坐标。；flow：flow：由当前观测绑定，含义参见语义接口 rinse_hold(object, flow, duration, temperature=None)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；duration：有效作用时长，单位秒；不能用无接触的等待代替。；temperature：temperature：由当前观测绑定，含义参见语义接口 rinse_hold(object, flow, duration, temperature=None)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。\n运行职责：通过已暴露的 api 和已发布 P/A/C依赖实现；观察、动作、效果诊断与有限恢复共享 host 预算。返回 status/evidence/phase 等诊断不得替代 host 验证。\n验证边界：水开启、接近水槽或等待时长不等于有效冲洗；连续/累计计时须区分。 仅使用 supported_predicates；没有匹配的独立判据时返回 unknown/说明阻塞，不伪造成功。native_success 只用于真正完成整任务的最后一步。\n应用示例：冲洗生菜、鱼、碗和砧板；浸润海绵；倒出蔬菜后清洗。 这是需求设计，不是实现或实测覆盖证明。",
+      "parameters": {
+        "object": {
+          "required": false,
+          "recommended": true,
+          "description": "当前场景中的目标对象绑定；不要硬编码仿真 ID 或世界坐标。"
+        },
+        "flow": {
+          "required": false,
+          "recommended": true,
+          "description": "flow：由当前观测绑定，含义参见语义接口 rinse_hold(object, flow, duration, temperature=None)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "duration": {
+          "required": false,
+          "recommended": true,
+          "description": "有效作用时长，单位秒；不能用无接触的等待代替。"
+        },
+        "temperature": {
+          "required": false,
+          "recommended": true,
+          "description": "temperature：由当前观测绑定，含义参见语义接口 rinse_hold(object, flow, duration, temperature=None)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        }
+      },
+      "semantic_signature": "rinse_hold(object, flow, duration, temperature=None)",
+      "contract": {
+        "variants": "鱼、生菜、碗、砧板、海绵；连续或累计有效冲洗",
+        "preconditions": "水流满足任务要求；物体可移动到水流或有效水槽区域",
+        "effects": "物体在有效水流下保持足够时间，之后按任务放置/关水",
+        "observable_verification": "图像中的水流与物体相对位置、可观测温度线索或规定设置、控制时钟",
+        "bounded_failure_recovery": "脱离水流时按合同重计或暂停；未能确认条件时返回 unknown",
+        "acceptance_tests": "不同物体、水流区域、热水设置、连续/累计计时和关水顺序"
+      },
+      "applications": "冲洗生菜、鱼、碗和砧板；浸润海绵；倒出蔬菜后清洗。",
+      "source_training_examples": [
+        "WashLettuce",
+        "WashFish",
+        "RinseBowls",
+        "RinseCuttingBoard",
+        "SoakSponge",
+        "DrainVeggies"
+      ],
+      "execution_mode": "learned_code",
+      "execution_owner": "skill_executor",
+      "entrypoint": "skill(api, params) -> dict",
+      "implemented": false
+    },
+    "A24": {
+      "id": "A24",
+      "name": "fill_under_flow",
+      "label": "承接水流装填保持",
+      "layer": "action",
+      "family": "flow",
+      "summary": "将容器开口对准水流并保持正立，持续承接到要求的时长或可观测装填目标；对齐丢失时重新观察和调整。",
+      "description": "A24 fill_under_flow（承接水流装填保持）\n将容器开口对准水流并保持正立，持续承接到要求的时长或可观测装填目标；对齐丢失时重新观察和调整。\n语义接口：fill_under_flow(vessel, flow, duration, return_goal)。实际执行统一使用 skill(api, params)，这些参数放入 params。\n支持变体：把搅拌杯保持在水流下装填；以任务支持的装填效果为限\n前置条件：水流开启；容器开口对准水流且保持正立\n完成效果：完成要求的承接时间或可观测装填目标\n可观测检查：开口与水流对齐、姿态和控制时钟；不读取私有装填计数器\n有限恢复：对齐丢失重观察；避免误把任务名字 FillKettle 当作真实灌水要求\n待验收维度：容器高度、开口大小、对齐中断和装填时长\n参数：vessel：vessel：由当前观测绑定，含义参见语义接口 fill_under_flow(vessel, flow, duration, return_goal)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；flow：flow：由当前观测绑定，含义参见语义接口 fill_under_flow(vessel, flow, duration, return_goal)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；duration：有效作用时长，单位秒；不能用无接触的等待代替。；return_goal：return_goal：由当前观测绑定，含义参见语义接口 fill_under_flow(vessel, flow, duration, return_goal)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。\n运行职责：通过已暴露的 api 和已发布 P/A/C依赖实现；观察、动作、效果诊断与有限恢复共享 host 预算。返回 status/evidence/phase 等诊断不得替代 host 验证。\n验证边界：承接时长不能虚构装填体积；只按 bench 可观测装填过程语义实现。 仅使用 supported_predicates；没有匹配的独立判据时返回 unknown/说明阻塞，不伪造成功。native_success 只用于真正完成整任务的最后一步。\n应用示例：`FillBlenderJug`：将搅拌杯保持在水流下完成装填过程。 这是需求设计，不是实现或实测覆盖证明。",
+      "parameters": {
+        "vessel": {
+          "required": false,
+          "recommended": true,
+          "description": "vessel：由当前观测绑定，含义参见语义接口 fill_under_flow(vessel, flow, duration, return_goal)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "flow": {
+          "required": false,
+          "recommended": true,
+          "description": "flow：由当前观测绑定，含义参见语义接口 fill_under_flow(vessel, flow, duration, return_goal)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "duration": {
+          "required": false,
+          "recommended": true,
+          "description": "有效作用时长，单位秒；不能用无接触的等待代替。"
+        },
+        "return_goal": {
+          "required": false,
+          "recommended": true,
+          "description": "return_goal：由当前观测绑定，含义参见语义接口 fill_under_flow(vessel, flow, duration, return_goal)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        }
+      },
+      "semantic_signature": "fill_under_flow(vessel, flow, duration, return_goal)",
+      "contract": {
+        "variants": "把搅拌杯保持在水流下装填；以任务支持的装填效果为限",
+        "preconditions": "水流开启；容器开口对准水流且保持正立",
+        "effects": "完成要求的承接时间或可观测装填目标",
+        "observable_verification": "开口与水流对齐、姿态和控制时钟；不读取私有装填计数器",
+        "bounded_failure_recovery": "对齐丢失重观察；避免误把任务名字 FillKettle 当作真实灌水要求",
+        "acceptance_tests": "容器高度、开口大小、对齐中断和装填时长"
+      },
+      "applications": "`FillBlenderJug`：将搅拌杯保持在水流下完成装填过程。",
+      "source_training_examples": [
+        "FillBlenderJug"
+      ],
+      "execution_mode": "learned_code",
+      "execution_owner": "skill_executor",
+      "entrypoint": "skill(api, params) -> dict",
+      "implemented": false
+    },
+    "A25": {
+      "id": "A25",
+      "name": "wait_until",
+      "label": "事件等待与持续条件保持",
+      "layer": "action",
+      "family": "temporal",
+      "summary": "等待指定事件、状态变化或最短时长，同时检查需要保持的条件；满足条件后进入下一阶段，超过期限则返回。",
+      "description": "A25 wait_until（事件等待与持续条件保持）\n等待指定事件、状态变化或最短时长，同时检查需要保持的条件；满足条件后进入下一阶段，超过期限则返回。\n语义接口：wait_until(predicate, min_duration, deadline, invariants)。实际执行统一使用 skill(api, params)，这些参数放入 params。\n支持变体：吐司机弹起、锅预热、水壶冷却、秤等待、酱汁变色\n前置条件：已启动正确阶段；等待期间的约束已声明\n完成效果：事件或时长条件成立后才进入下一步\n可观测检查：当前图像状态与动作时钟；颜色等事件重新观察，不查询私有计时器\n有限恢复：明确最长等待；条件提前破坏则重置/恢复，不无限循环\n待验收维度：时间单位、不同控制频率、事件未发生、条件中断与过早操作\n参数：predicate：希望观察的效果/事件及允许的证据，不能读取或调用仿真评分器。；min_duration：最短持续时间，单位秒。；deadline：从当前阶段入口起的最大等待秒数，不是私有仿真计时器。；invariants：操作期间必须保持的关系、持物、内容物、阶段与事件顺序。\n运行职责：通过已暴露的 api 和已发布 P/A/C依赖实现；观察、动作、效果诊断与有限恢复共享 host 预算。返回 status/evidence/phase 等诊断不得替代 host 验证。\n验证边界：等待时间到不代表事件发生；冷却时原位保持等历史条件不可省略。 仅使用 supported_predicates；没有匹配的独立判据时返回 unknown/说明阻塞，不伪造成功。native_success 只用于真正完成整任务的最后一步。\n应用示例：等吐司机弹杆、锅预热、水壶冷却、秤上稳定或酱汁变色。 这是需求设计，不是实现或实测覆盖证明。",
+      "parameters": {
+        "predicate": {
+          "required": false,
+          "recommended": true,
+          "description": "希望观察的效果/事件及允许的证据，不能读取或调用仿真评分器。"
+        },
+        "min_duration": {
+          "required": false,
+          "recommended": true,
+          "description": "最短持续时间，单位秒。"
+        },
+        "deadline": {
+          "required": false,
+          "recommended": true,
+          "description": "从当前阶段入口起的最大等待秒数，不是私有仿真计时器。"
+        },
+        "invariants": {
+          "required": false,
+          "recommended": true,
+          "description": "操作期间必须保持的关系、持物、内容物、阶段与事件顺序。"
+        }
+      },
+      "semantic_signature": "wait_until(predicate, min_duration, deadline, invariants)",
+      "contract": {
+        "variants": "吐司机弹起、锅预热、水壶冷却、秤等待、酱汁变色",
+        "preconditions": "已启动正确阶段；等待期间的约束已声明",
+        "effects": "事件或时长条件成立后才进入下一步",
+        "observable_verification": "当前图像状态与动作时钟；颜色等事件重新观察，不查询私有计时器",
+        "bounded_failure_recovery": "明确最长等待；条件提前破坏则重置/恢复，不无限循环",
+        "acceptance_tests": "时间单位、不同控制频率、事件未发生、条件中断与过早操作"
+      },
+      "applications": "等吐司机弹杆、锅预热、水壶冷却、秤上稳定或酱汁变色。",
+      "source_training_examples": [
+        "GetToastedBread",
+        "CoolKettle",
+        "PreheatPot",
+        "ScalePortioning",
+        "TurnOffSimmeredSauceHeat"
+      ],
+      "execution_mode": "learned_code",
+      "execution_owner": "skill_executor",
+      "entrypoint": "skill(api, params) -> dict",
+      "implemented": false
+    },
+    "A26": {
+      "id": "A26",
+      "name": "push_slide",
+      "label": "自由物体平面推移",
+      "layer": "action",
+      "family": "push_slide",
+      "summary": "在稳定支撑面上建立接触，分段推动物体到目标区域；观察实际位移，保持支撑并避免碰落其他物体。",
+      "description": "A26 push_slide（自由物体平面推移）\n在稳定支撑面上建立接触，分段推动物体到目标区域；观察实际位移，保持支撑并避免碰落其他物体。\n语义接口：push_slide(object, region, direction, max_displacement)。实际执行统一使用 skill(api, params)，这些参数放入 params。\n支持变体：需要时把砧板推到流水区域；只作为条件分支，不假定每次必须推\n前置条件：物体有稳定平面支撑，推移路径和接触面可用\n完成效果：物体进入目标区域，保持支撑并不碰落其他物体\n可观测检查：物体相对位移、支撑关系和路径阻挡\n有限恢复：短行程分段推；无进展则换接触面或交还上层\n待验收维度：不同摩擦、接触面、旁边物体和是否可改用抓放\n参数：object：当前场景中的目标对象绑定；不要硬编码仿真 ID 或世界坐标。；region：region：由当前观测绑定，含义参见语义接口 push_slide(object, region, direction, max_displacement)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；direction：direction：由当前观测绑定，含义参见语义接口 push_slide(object, region, direction, max_displacement)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；max_displacement：最大推移距离，单位米。\n运行职责：通过已暴露的 api 和已发布 P/A/C依赖实现；观察、动作、效果诊断与有限恢复共享 host 预算。返回 status/evidence/phase 等诊断不得替代 host 验证。\n验证边界：指令位移不等于物体位移；需要物体实际位置与持续支撑证据。 仅使用 supported_predicates；没有匹配的独立判据时返回 unknown/说明阻塞，不伪造成功。native_success 只用于真正完成整任务的最后一步。\n应用示例：`RinseCuttingBoard`：初始位置需要时，把砧板推到有效水流区域。 这是需求设计，不是实现或实测覆盖证明。",
+      "parameters": {
+        "object": {
+          "required": false,
+          "recommended": true,
+          "description": "当前场景中的目标对象绑定；不要硬编码仿真 ID 或世界坐标。"
+        },
+        "region": {
+          "required": false,
+          "recommended": true,
+          "description": "region：由当前观测绑定，含义参见语义接口 push_slide(object, region, direction, max_displacement)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "direction": {
+          "required": false,
+          "recommended": true,
+          "description": "direction：由当前观测绑定，含义参见语义接口 push_slide(object, region, direction, max_displacement)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "max_displacement": {
+          "required": false,
+          "recommended": true,
+          "description": "最大推移距离，单位米。"
+        }
+      },
+      "semantic_signature": "push_slide(object, region, direction, max_displacement)",
+      "contract": {
+        "variants": "需要时把砧板推到流水区域；只作为条件分支，不假定每次必须推",
+        "preconditions": "物体有稳定平面支撑，推移路径和接触面可用",
+        "effects": "物体进入目标区域，保持支撑并不碰落其他物体",
+        "observable_verification": "物体相对位移、支撑关系和路径阻挡",
+        "bounded_failure_recovery": "短行程分段推；无进展则换接触面或交还上层",
+        "acceptance_tests": "不同摩擦、接触面、旁边物体和是否可改用抓放"
+      },
+      "applications": "`RinseCuttingBoard`：初始位置需要时，把砧板推到有效水流区域。",
+      "source_training_examples": [
+        "RinseCuttingBoard"
+      ],
+      "execution_mode": "learned_code",
+      "execution_owner": "skill_executor",
+      "entrypoint": "skill(api, params) -> dict",
+      "implemented": false
+    },
+    "C01": {
+      "id": "C01",
+      "name": "assign_objects",
+      "label": "筛选、计数、排序与分配",
+      "layer": "coordination",
+      "family": "coordination",
+      "summary": "按可观测属性、数量和目标关系筛选、排序、配对与分配；跟踪未完成集合，避免重复操作和误动干扰物。",
+      "description": "C01 assign_objects（筛选、计数、排序与分配）\n按可观测属性、数量和目标关系筛选、排序、配对与分配；跟踪未完成集合，避免重复操作和误动干扰物。\n语义接口：assign_objects(objects, predicates, destinations, quotas)。语义参数通过 params 传入；实际 Python 入口统一为 skill(api, params)，不是新增的仿真 API。\n支持变体：类别/材质/成熟度筛选、大小排序、一物一位、每盒数量、配对、留置干扰物\n前置条件：候选目标与属性来自 P01；目标关系和数量明确\n完成效果：生成不重复且满足配额的对象到目标分配，并跟踪剩余集合\n可观测检查：每步后重新计数，检查重复分配、误动干扰物和已有目标状态\n有限恢复：属性不可辨时不猜；缺少对象或容量不足时返回需求缺口\n待验收维度：相同外观、数量变化、已完成部分、不同分组和目标互换\n参数：objects：objects：由当前观测绑定，含义参见语义接口 assign_objects(objects, predicates, destinations, quotas)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；predicates：predicates：由当前观测绑定，含义参见语义接口 assign_objects(objects, predicates, destinations, quotas)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；destinations：destinations：由当前观测绑定，含义参见语义接口 assign_objects(objects, predicates, destinations, quotas)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；quotas：quotas：由当前观测绑定，含义参见语义接口 assign_objects(objects, predicates, destinations, quotas)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。\n运行职责：这是需要生成、修复、参数化和入库的 Python 能力；起初为空。可独立作为计划步骤，发布后可由其他 P/A/C 能力通过锁定版本的 api.call 复用。host 负责独立验证、重置和入库。\n应用示例：等量装饭盒；向不同杯子分配冰块；按大小排序；饮料分类。 这是需求设计，不是实现或实测覆盖证明。\n代码消费 params 中的当前目标、已完成集合、约束和预算，或调用已发布的 P/A/C 函数取得输出；所有重试/图遍历有界，继承 host 的剩余动作预算和代码超时，不重置环境、不递归调度整个任务、不执行字符串代码。C01 的分配可用 assignment_valid 检查不重复、合法目标及配额；C02/C03 的物理效果仍由相应 host 判据独立验证。",
+      "parameters": {
+        "objects": {
+          "required": false,
+          "recommended": true,
+          "description": "objects：由当前观测绑定，含义参见语义接口 assign_objects(objects, predicates, destinations, quotas)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "predicates": {
+          "required": false,
+          "recommended": true,
+          "description": "predicates：由当前观测绑定，含义参见语义接口 assign_objects(objects, predicates, destinations, quotas)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "destinations": {
+          "required": false,
+          "recommended": true,
+          "description": "destinations：由当前观测绑定，含义参见语义接口 assign_objects(objects, predicates, destinations, quotas)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "quotas": {
+          "required": false,
+          "recommended": true,
+          "description": "quotas：由当前观测绑定，含义参见语义接口 assign_objects(objects, predicates, destinations, quotas)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        }
+      },
+      "semantic_signature": "assign_objects(objects, predicates, destinations, quotas)",
+      "contract": {
+        "variants": "类别/材质/成熟度筛选、大小排序、一物一位、每盒数量、配对、留置干扰物",
+        "preconditions": "候选目标与属性来自 P01；目标关系和数量明确",
+        "effects": "生成不重复且满足配额的对象到目标分配，并跟踪剩余集合",
+        "observable_verification": "每步后重新计数，检查重复分配、误动干扰物和已有目标状态",
+        "bounded_failure_recovery": "属性不可辨时不猜；缺少对象或容量不足时返回需求缺口",
+        "acceptance_tests": "相同外观、数量变化、已完成部分、不同分组和目标互换"
+      },
+      "applications": "等量装饭盒；向不同杯子分配冰块；按大小排序；饮料分类。",
+      "source_training_examples": [
+        "PackIdenticalLunches",
+        "PlaceEqualIceCubes",
+        "SizeSorting",
+        "BeverageSorting"
+      ],
+      "execution_mode": "learned_code",
+      "execution_owner": "skill_executor",
+      "entrypoint": "skill(api, params) -> dict",
+      "implemented": false
+    },
+    "C02": {
+      "id": "C02",
+      "name": "clear_space",
+      "label": "腾挪空间与障碍重排",
+      "layer": "coordination",
+      "family": "coordination",
+      "summary": "识别占位物和允许搬动的对象，安排合法暂存或重排，再完成目标放置；保护已有分类、内容物和需要保留的关系。",
+      "description": "C02 clear_space（腾挪空间与障碍重排）\n识别占位物和允许搬动的对象，安排合法暂存或重排，再完成目标放置；保护已有分类、内容物和需要保留的关系。\n语义接口：clear_space(region, keep_constraints, relocation_goals)。语义参数通过 params 传入；实际 Python 入口统一为 skill(api, params)，不是新增的仿真 API。\n支持变体：移走占位物、交换层架、为饭盒/调料腾出位置\n前置条件：目标区域和阻挡物已观察；允许搬动的集合明确\n完成效果：腾出可放置区域，同时保持需要保留的物体与分类关系\n可观测检查：区域占用和碰撞空间复查；不能只看目标物体是否移动\n有限恢复：有限重排；无合法暂存位置时返回 unknown/unsupported\n待验收维度：多阻挡物、无暂存区、重排后原有关系被破坏和目标尺寸变化\n参数：region：region：由当前观测绑定，含义参见语义接口 clear_space(region, keep_constraints, relocation_goals)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；keep_constraints：keep_constraints：由当前观测绑定，含义参见语义接口 clear_space(region, keep_constraints, relocation_goals)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；relocation_goals：relocation_goals：由当前观测绑定，含义参见语义接口 clear_space(region, keep_constraints, relocation_goals)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。\n运行职责：这是需要生成、修复、参数化和入库的 Python 能力；起初为空。可独立作为计划步骤，发布后可由其他 P/A/C 能力通过锁定版本的 api.call 复用。host 负责独立验证、重置和入库。\n应用示例：为饭盒或调料腾出冰箱空间；重排冰箱物品；清理砧板。 这是需求设计，不是实现或实测覆盖证明。\n代码消费 params 中的当前目标、已完成集合、约束和预算，或调用已发布的 P/A/C 函数取得输出；所有重试/图遍历有界，继承 host 的剩余动作预算和代码超时，不重置环境、不递归调度整个任务、不执行字符串代码。C01 的分配可用 assignment_valid 检查不重复、合法目标及配额；C02/C03 的物理效果仍由相应 host 判据独立验证。",
+      "parameters": {
+        "region": {
+          "required": false,
+          "recommended": true,
+          "description": "region：由当前观测绑定，含义参见语义接口 clear_space(region, keep_constraints, relocation_goals)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "keep_constraints": {
+          "required": false,
+          "recommended": true,
+          "description": "keep_constraints：由当前观测绑定，含义参见语义接口 clear_space(region, keep_constraints, relocation_goals)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "relocation_goals": {
+          "required": false,
+          "recommended": true,
+          "description": "relocation_goals：由当前观测绑定，含义参见语义接口 clear_space(region, keep_constraints, relocation_goals)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        }
+      },
+      "semantic_signature": "clear_space(region, keep_constraints, relocation_goals)",
+      "contract": {
+        "variants": "移走占位物、交换层架、为饭盒/调料腾出位置",
+        "preconditions": "目标区域和阻挡物已观察；允许搬动的集合明确",
+        "effects": "腾出可放置区域，同时保持需要保留的物体与分类关系",
+        "observable_verification": "区域占用和碰撞空间复查；不能只看目标物体是否移动",
+        "bounded_failure_recovery": "有限重排；无合法暂存位置时返回 unknown/unsupported",
+        "acceptance_tests": "多阻挡物、无暂存区、重排后原有关系被破坏和目标尺寸变化"
+      },
+      "applications": "为饭盒或调料腾出冰箱空间；重排冰箱物品；清理砧板。",
+      "source_training_examples": [
+        "LoadPreparedFood",
+        "LoadCondimentsInFridge",
+        "RearrangeFridgeItems",
+        "ClearCuttingBoard"
+      ],
+      "execution_mode": "learned_code",
+      "execution_owner": "skill_executor",
+      "entrypoint": "skill(api, params) -> dict",
+      "implemented": false
+    },
+    "C03": {
+      "id": "C03",
+      "name": "execute_skill_graph",
+      "label": "阶段衔接、预算与有限恢复",
+      "layer": "coordination",
+      "family": "coordination",
+      "summary": "根据能力前后条件安排执行流程，处理夹爪占用、历史事件和已完成效果；分配预算、有限重试，无法可靠继续时交还控制。",
+      "description": "C03 execute_skill_graph（阶段衔接、预算与有限恢复）\n根据能力前后条件安排执行流程，处理夹爪占用、历史事件和已完成效果；分配预算、有限重试，无法可靠继续时交还控制。\n语义接口：execute_skill_graph(goals, invariants, budgets, recovery)。语义参数通过 params 传入；实际 Python 入口统一为 skill(api, params)，不是新增的仿真 API。\n支持变体：前后条件、夹爪占用、历史事件、有限重试、失败交还、预算分配\n前置条件：每项能力有明确合同与状态返回；当前状态可观测\n完成效果：执行合法能力链；前置缺失先补齐，未知时有界退出\n可观测检查：检查前一步效果是否满足下一步要求，并在每步保护已完成效果\n有限恢复：不隐式重置；记录失败阶段；不从测试成功信号反推下一动作\n待验收维度：部分完成、先后约束、误抓、观测不确定、迟滞和动作/时间预算\n参数：goals：goals：由当前观测绑定，含义参见语义接口 execute_skill_graph(goals, invariants, budgets, recovery)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。；invariants：操作期间必须保持的关系、持物、内容物、阶段与事件顺序。；budgets：本次允许的动作数、时间与局部重试上限，不能覆盖 host 预算。；recovery：recovery：由当前观测绑定，含义参见语义接口 execute_skill_graph(goals, invariants, budgets, recovery)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。\n运行职责：这是需要生成、修复、参数化和入库的 Python 能力；起初为空。可独立作为计划步骤，发布后可由其他 P/A/C 能力通过锁定版本的 api.call 复用。host 负责独立验证、重置和入库。\n应用示例：装碗→搬碗→关门→启动微波炉；关火→原位冷却→搬壶；洗碗机层架与门的操作顺序。 这是需求设计，不是实现或实测覆盖证明。\n代码消费 params 中的当前目标、已完成集合、约束和预算，或调用已发布的 P/A/C 函数取得输出；所有重试/图遍历有界，继承 host 的剩余动作预算和代码超时，不重置环境、不递归调度整个任务、不执行字符串代码。C01 的分配可用 assignment_valid 检查不重复、合法目标及配额；C02/C03 的物理效果仍由相应 host 判据独立验证。",
+      "parameters": {
+        "goals": {
+          "required": false,
+          "recommended": true,
+          "description": "goals：由当前观测绑定，含义参见语义接口 execute_skill_graph(goals, invariants, budgets, recovery)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        },
+        "invariants": {
+          "required": false,
+          "recommended": true,
+          "description": "操作期间必须保持的关系、持物、内容物、阶段与事件顺序。"
+        },
+        "budgets": {
+          "required": false,
+          "recommended": true,
+          "description": "本次允许的动作数、时间与局部重试上限，不能覆盖 host 预算。"
+        },
+        "recovery": {
+          "required": false,
+          "recommended": true,
+          "description": "recovery：由当前观测绑定，含义参见语义接口 execute_skill_graph(goals, invariants, budgets, recovery)；几何量明确坐标系，距离用米、角度用弧度、时间用秒。"
+        }
+      },
+      "semantic_signature": "execute_skill_graph(goals, invariants, budgets, recovery)",
+      "contract": {
+        "variants": "前后条件、夹爪占用、历史事件、有限重试、失败交还、预算分配",
+        "preconditions": "每项能力有明确合同与状态返回；当前状态可观测",
+        "effects": "执行合法能力链；前置缺失先补齐，未知时有界退出",
+        "observable_verification": "检查前一步效果是否满足下一步要求，并在每步保护已完成效果",
+        "bounded_failure_recovery": "不隐式重置；记录失败阶段；不从测试成功信号反推下一动作",
+        "acceptance_tests": "部分完成、先后约束、误抓、观测不确定、迟滞和动作/时间预算"
+      },
+      "applications": "装碗→搬碗→关门→启动微波炉；关火→原位冷却→搬壶；洗碗机层架与门的操作顺序。",
+      "source_training_examples": [
+        "SteamInMicrowave",
+        "CoolKettle",
+        "LoadDishwasher",
+        "MultistepSteaming"
+      ],
+      "execution_mode": "learned_code",
+      "execution_owner": "skill_executor",
+      "entrypoint": "skill(api, params) -> dict",
+      "implemented": false
+    }
+  },
+  "execution_contract_revision": "all-layers-code-v2"
+}

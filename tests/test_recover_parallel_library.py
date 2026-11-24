@@ -34,7 +34,7 @@ class RecoveryTests(unittest.TestCase):
         self.exploration = self.run / "episodes/000/exploration"
         self.exploration.mkdir(parents=True)
 
-    def record(self, name, atom="P01", code=CODE, success=False, attempt=0):
+    def record(self, name, atom="A02", code=CODE, success=False, attempt=0):
         path = self.exploration / "attempts" / name / "record.json"
         path.parent.mkdir(parents=True)
         record = {"step": {"id": "step-0", "atom": atom, "params": {"steps": 1}},
@@ -54,12 +54,12 @@ class RecoveryTests(unittest.TestCase):
     def test_union_and_counted_failure_recovery_without_inventing_success(self):
         first_path, first_record = self.record("plan00_step00_try00")
         self.record("plan01_step00_try00")  # Same identity occurs twice; match by count.
-        self.record("plan00_step01_try00", atom="P02", code=RECOVERED)
-        self.record("plan00_step02_try00", atom="P03", code=INVALID)
-        self.record("plan00_step03_try00", atom="P04", code=CODE, success=True)
-        baseline_candidate = self.library.propose("P01", CODE)
-        baseline_case = self.library.register_case({"atom": "P01", "task_config": {"seed": 1}})
-        self.library.add_lesson("P01", {"source_run": str(self.exploration), "atom": "P01",
+        self.record("plan00_step01_try00", atom="A04", code=RECOVERED)
+        self.record("plan00_step02_try00", atom="A05", code=INVALID)
+        self.record("plan00_step03_try00", atom="A07", code=CODE, success=True)
+        baseline_candidate = self.library.propose("A02", CODE)
+        baseline_case = self.library.register_case({"atom": "A02", "task_config": {"seed": 1}})
+        self.library.add_lesson("A02", {"source_run": str(self.exploration), "atom": "A02",
             "step_id": "step-0", "attempt": 0, "sha256": first_record["sha256"]})
         baseline = self.snapshot(Library._read_state_file(self.library.state_path))
         # A branch has lost the baseline records but kept its immutable sources.
@@ -67,9 +67,9 @@ class RecoveryTests(unittest.TestCase):
             state = self.library._load()
             state.update(candidates={}, cases={}, pending_cases={}, lessons={})
             self.library._save(state)
-        branch_candidate = self.library.propose("P02", OTHER)
-        branch_case = self.library.register_case({"atom": "P02", "task_config": {"seed": 2}})
-        self.library.add_lesson("P02", "unrelated retained lesson")
+        branch_candidate = self.library.propose("A04", OTHER)
+        branch_case = self.library.register_case({"atom": "A04", "task_config": {"seed": 2}})
+        self.library.add_lesson("A04", "unrelated retained lesson")
         evidence = {path: path.read_bytes() for directory in (self.source, self.run)
                     for path in directory.rglob("*") if path.is_file()}
         evidence[baseline] = baseline.read_bytes()
@@ -97,16 +97,16 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(recovered[0]["validations"], [])
         self.assertFalse(state["active"])
         self.assertFalse(state["versions"])
-        self.assertTrue(all("recovered_from_record" in lesson for lesson in restored.lessons("P03")))
+        self.assertTrue(all("recovered_from_record" in lesson for lesson in restored.lessons("A05")))
         self.assertEqual(Library._read_state_file(restored.backup_path), state)
         self.assertEqual(json.loads((self.output / "migration_manifest.json").read_text()), manifest)
         for path, contents in evidence.items():
             self.assertEqual(path.read_bytes(), contents, str(path))
 
     def test_conflicting_candidate_case_and_lesson_ids_are_rejected(self):
-        candidate = self.library.propose("P01", CODE)
-        case_id = self.library.register_case({"atom": "P01", "task_config": {}})
-        self.library.add_lesson("P01", "original")
+        candidate = self.library.propose("A02", CODE)
+        case_id = self.library.register_case({"atom": "A02", "task_config": {}})
+        self.library.add_lesson("A02", "original")
         state = Library._read_state_file(self.library.state_path)
         for kind in ("candidate", "case", "lesson"):
             with self.subTest(kind=kind):
@@ -116,7 +116,7 @@ class RecoveryTests(unittest.TestCase):
                 elif kind == "case":
                     conflicting["pending_cases"][case_id]["task_config"] = {"conflict": True}
                 else:
-                    conflicting["lessons"]["P01"][0]["message"] = "conflict"
+                    conflicting["lessons"]["A02"][0]["message"] = "conflict"
                 snapshot = self.snapshot(conflicting, f"conflict-{kind}.json")
                 with self.assertRaisesRegex(ValueError, f"Conflicting {kind}"):
                     recovery.recover(self.source, [snapshot], [], self.output)
@@ -127,7 +127,7 @@ class RecoveryTests(unittest.TestCase):
         for field in ("active", "versions"):
             with self.subTest(field=field):
                 published = copy.deepcopy(state)
-                published[field] = {"P01": 1 if field == "active" else {}}
+                published[field] = {"A02": 1 if field == "active" else {}}
                 snapshot = self.snapshot(published, f"published-{field}.json")
                 with self.assertRaisesRegex(ValueError, "published skills"):
                     recovery.recover(self.source, [snapshot], [], self.output)
@@ -143,14 +143,14 @@ class RecoveryTests(unittest.TestCase):
         self.assertFalse(self.output.exists())
 
     def test_source_hash_mismatch_is_refused_before_destination_creation(self):
-        candidate = self.library.propose("P01", CODE)
+        candidate = self.library.propose("A02", CODE)
         Path(candidate["source_path"]).write_text(OTHER)
         with self.assertRaisesRegex(ValueError, "source hash mismatch"):
             recovery.recover(self.source, [], [], self.output)
         self.assertFalse(self.output.exists())
 
     def test_missing_candidate_source_is_refused(self):
-        candidate = self.library.propose("P01", CODE)
+        candidate = self.library.propose("A02", CODE)
         Path(candidate["source_path"]).unlink()
         with self.assertRaisesRegex(ValueError, "Missing source"):
             recovery.recover(self.source, [], [], self.output)
@@ -173,7 +173,7 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(marker.read_text(), "preserve")
 
     def test_unresolved_dependency_retains_failure_without_inventing_a_version(self):
-        caller = 'def skill(api, params):\n    return api.call("P02", params)\n'
+        caller = 'def skill(api, params):\n    return api.call("A04", params)\n'
         self.record("plan00_step00_try00", code=caller)
         manifest = recovery.recover(self.source, [], [self.run], self.output)
         restored = Library(self.output)
@@ -181,7 +181,7 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(manifest["candidates_recovered"], 0)
         self.assertEqual(len(manifest["candidate_recovery_skipped"]), 1)
         self.assertEqual(restored.list_active(), [])
-        self.assertEqual(len(restored.lessons("P01")), 1)
+        self.assertEqual(len(restored.lessons("A02")), 1)
 
     def test_cli_accepts_repeatable_snapshot_and_run_arguments(self):
         self.record("plan00_step00_try00")
@@ -196,7 +196,7 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(json.loads(stdout.getvalue())["lessons_recovered"], 1)
 
     def test_legacy_v1_cases_and_v2_pending_merge_as_pending_without_mutating_inputs(self):
-        first = self.library.stage_case({"atom": "P01", "task_config": {"seed": 20}})
+        first = self.library.stage_case({"atom": "A02", "task_config": {"seed": 20}})
         modern = Library._read_state_file(self.library.state_path)
         legacy = copy.deepcopy(modern)
         legacy["schema_version"] = 1
@@ -204,15 +204,15 @@ class RecoveryTests(unittest.TestCase):
         legacy.pop("case_activations")
         legacy.pop("case_lifecycle_version")
         legacy_snapshot = self.snapshot(legacy, "legacy-v1.json")
-        second = self.library.stage_case({"atom": "P02", "task_config": {"seed": 21}})
+        second = self.library.stage_case({"atom": "A04", "task_config": {"seed": 21}})
         evidence = {path: path.read_bytes() for path in self.source.rglob("*") if path.is_file()}
         evidence[legacy_snapshot] = legacy_snapshot.read_bytes()
         manifest = recovery.recover(self.source, [legacy_snapshot], [], self.output)
         restored = Library(self.output)
-        self.assertEqual(restored.cases("P01"), [])
-        self.assertEqual(restored.cases("P02"), [])
-        self.assertEqual([case["id"] for case in restored.pending_cases("P01")], [first])
-        self.assertEqual([case["id"] for case in restored.pending_cases("P02")], [second])
+        self.assertEqual(restored.cases("A02"), [])
+        self.assertEqual(restored.cases("A04"), [])
+        self.assertEqual([case["id"] for case in restored.pending_cases("A02")], [first])
+        self.assertEqual([case["id"] for case in restored.pending_cases("A04")], [second])
         self.assertEqual(manifest["output_schema_version"], 2)
         for path in (restored.state_path, restored.backup_path):
             state = Library._read_state_file(path)
@@ -223,7 +223,7 @@ class RecoveryTests(unittest.TestCase):
             self.assertEqual(path.read_bytes(), contents)
 
     def test_v1_source_library_is_read_only_and_recovered_as_v2_pending(self):
-        identifier = self.library.stage_case({"atom": "P01", "task_config": {"seed": 22}})
+        identifier = self.library.stage_case({"atom": "A02", "task_config": {"seed": 22}})
         legacy = Library._read_state_file(self.library.state_path)
         legacy["schema_version"] = 1
         legacy["cases"] = legacy.pop("pending_cases")
@@ -235,11 +235,11 @@ class RecoveryTests(unittest.TestCase):
         recovery.recover(self.source, [], [], self.output)
         self.assertEqual(self.library.state_path.read_bytes(), source_before)
         restored = Library(self.output)
-        self.assertEqual(restored.cases("P01"), [])
-        self.assertEqual([case["id"] for case in restored.pending_cases("P01")], [identifier])
+        self.assertEqual(restored.cases("A02"), [])
+        self.assertEqual([case["id"] for case in restored.pending_cases("A02")], [identifier])
 
     def test_conflicting_v1_case_and_v2_pending_case_id_is_rejected(self):
-        identifier = self.library.stage_case({"atom": "P01", "task_config": {"seed": 23}})
+        identifier = self.library.stage_case({"atom": "A02", "task_config": {"seed": 23}})
         legacy = Library._read_state_file(self.library.state_path)
         legacy["schema_version"] = 1
         legacy["cases"] = legacy.pop("pending_cases")
@@ -253,7 +253,7 @@ class RecoveryTests(unittest.TestCase):
 
     def test_admitted_case_evidence_without_version_history_is_not_auto_merged(self):
         state = Library._read_state_file(self.library.state_path)
-        state["case_activations"]["case-orphan"] = {"atom": "P01", "version": 1, "sha256": source_hash(CODE)}
+        state["case_activations"]["case-orphan"] = {"atom": "A02", "version": 1, "sha256": source_hash(CODE)}
         snapshot = self.snapshot(state, "orphan-published-evidence.json")
         with self.assertRaisesRegex(ValueError, "published skills"):
             recovery.recover(self.source, [snapshot], [], self.output)

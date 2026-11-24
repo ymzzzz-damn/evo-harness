@@ -75,6 +75,43 @@ class GPUParallelTests(unittest.TestCase):
                                            deadline=0, preflight=preflight)
         return plan, manifest, Path(plan["run"]) / "parallel_plan.json"
 
+    def test_policy_evaluation_uses_frozen_training_source_and_settles_failed_trials(self):
+        import shutil
+        frozen = self.root / "training_source"
+        frozen.mkdir()
+        for name in ("evo", "scripts"):
+            shutil.copytree(self.project / name, frozen / name)
+        shutil.copyfile(self.project / "pyproject.toml", frozen / "pyproject.toml")
+        (frozen / "evo/__init__.py").write_text("FROZEN_TRAINING_ALGORITHM = True\n")
+        (self.project / "evo/__init__.py").write_text("LATER_CANONICAL_CHANGE = True\n")
+        self.config.update(mode="evaluate_policy", episode_retry={"max_episodes": 3, "history_episodes": 3})
+        self.config.pop("retry_experiences", None)
+        self.write(self.config_path, self.config)
+        plan, _ = launcher.prepare(self.config_path, "evo-policy-eval", self.project, self.runtime,
+                                   source_root=frozen)
+        self.assertEqual(plan["mode"], "evaluate_policy")
+        self.assertEqual(plan["completion_mode"], "all_attempted")
+        self.assertEqual(plan["source_origin"], str(frozen))
+        self.assertEqual((Path(plan["source"]) / "evo/__init__.py").read_text(),
+                         "FROZEN_TRAINING_ALGORITHM = True\n")
+        child = json.loads(Path(plan["workers"][0]["config"]).read_text())
+        self.assertEqual(child["episode_retry"]["max_episodes"], 3)
+        self.assertEqual(child["mode"], "evaluate_policy")
+
+    def test_training_handoff_runs_wrapper_and_preserves_one_episode_budget(self):
+        self.config.update(mode="run", episode_retry={"max_episodes": 1},
+            evaluation_handoff={"template": str(self.root / "evaluation_template.json"),
+                                "name": "evo-policy-eval"})
+        self.config.pop("retry_experiences", None)
+        self.write(self.config_path, self.config)
+        plan, manifest, _ = self.prepare()
+        command = json.loads(manifest.read_text())["spec"]["template"]["spec"]["containers"][0]["command"]
+        self.assertEqual(command[2], str(Path(plan["source"]) / "scripts/train_and_prepare_evaluation.py"))
+        self.assertEqual(plan["completion_mode"], "all_attempted")
+        self.assertEqual(plan["evaluation_handoff"], self.config["evaluation_handoff"])
+        child = json.loads(Path(plan["workers"][0]["config"]).read_text())
+        self.assertEqual(child["episode_retry"]["max_episodes"], 1)
+
     def test_one_eight_gpu_pod_with_sixteen_preserved_task_configs_and_one_snapshot(self):
         plan, manifest, _ = self.prepare()
         job = json.loads(manifest.read_text())
@@ -292,7 +329,10 @@ raise SystemExit(3 if index == 0 else 0)
         self.assertEqual(plan["preflight_scene_workers"], 8)
         self.assertEqual(plan["capacity_planning"]["host_memory_budget_mib"], 192 * 1024)
         with patch("scripts.gpu_capacity.choose_capacity", return_value={
-                "max_parallel": 24, "workers_per_gpu": 3, "peak_host_rss_mib": 2100}) as select:
+                "max_parallel": 24, "workers_per_gpu": 3, "peak_host_rss_mib": 2100}) as select, \
+             patch.dict(sys.modules, {"gpu_capacity": sys.modules["scripts.gpu_capacity"]}):
+            # The CLI and package import paths must share the same mock, even
+            # after the handoff tests have put scripts/ on sys.path.
             self.assertEqual(self.supervise_fixture(path), 0)
         self.assertEqual(select.call_args.args[2], 64)
         self.assertTrue(all(scene for _, probe, scene in self.spawned if probe))

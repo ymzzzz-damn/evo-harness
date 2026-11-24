@@ -1,5 +1,5 @@
 {
-  "library": "./library",
+  "library": "./library_pac32",
   "agent": {
     "provider": "http",
     "model": "YOUR_VISION_MODEL",
@@ -7,6 +7,7 @@
     "api": "responses",
     "reasoning_effort": "high",
     "api_key_env": "OPENAI_API_KEY",
+    "use_existing_runtime_auth": false,
     "timeout_s": 240,
     "max_retries": 2,
     "format_attempts": 2
@@ -14,11 +15,16 @@
   "exploration": {
     "max_attempts": 5,
     "max_replans": 1,
-    "code_timeout_s": 180
+    "max_plan_segments": 40,
+    "code_timeout_s": 180,
+    "plan_one_step": true,
+    "record_working_memory": true
   },
   "maintenance": {
     "max_candidates": 3,
-    "code_timeout_s": 180
+    "code_timeout_s": 180,
+    "reuse_replay_evidence": true,
+    "admission_policy": "compare_existing"
   },
   "maintain_after_task": true,
   "tasks": [
@@ -35,5 +41,5 @@
     "max_episodes": null,
     "history_episodes": 3
   },
-  "maintenance_trigger": "atomic"
+  "maintenance_trigger": "episode"
 }

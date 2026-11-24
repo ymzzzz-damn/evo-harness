@@ -18,7 +18,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from evo.catalog import get_spec
+from evo.catalog import CATALOG_VERSION, get_spec
 from evo.codecheck import check_code, source_hash
 from evo.library import Library, LibraryError, SCHEMA_VERSION, CASE_LIFECYCLE_VERSION
 
@@ -41,7 +41,7 @@ def _insert(records, identifier, value, kind):
 
 
 def _merge_states(paths):
-    merged = {"schema_version": SCHEMA_VERSION, "active": {}, "versions": {},
+    merged = {"schema_version": SCHEMA_VERSION, "atomic_catalog_version": CATALOG_VERSION, "active": {}, "versions": {},
               "candidates": {}, "cases": {}, "pending_cases": {}, "case_activations": {},
               "case_lifecycle_version": CASE_LIFECYCLE_VERSION, "lessons": {}, "events": []}
     lessons, event_keys, inputs = {}, set(), []

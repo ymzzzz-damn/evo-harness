@@ -90,15 +90,17 @@ class CampaignTests(unittest.TestCase):
         self.assertEqual(report["episodes"][0]["retry_status"], "budget_exhausted")
         self.assertEqual(len(self.factory.instances), 2)
 
-    def test_plan_complete_without_native_success_is_retried(self):
+    def test_plan_segment_budget_exhaustion_resets_and_reuses_published_prefix(self):
         partial = step(target=1, predicate="joint_near")
         fixtures = {"plan": [plan(partial), plan()], "repair": [candidate(GOOD), candidate(GOOD)],
                     "distill": [candidate(GOOD)]}
-        report, _ = self.run_campaign(fixtures, {"maintain_after_task": True})
+        report, _ = self.run_campaign(fixtures, {"maintain_after_task": True,
+            "tasks": [{**self.task, "horizon": 4}],
+            "exploration": {"max_attempts": 1, "max_replans": 0, "max_plan_segments": 1}})
         attempts = report["episodes"][0]["episode_attempts"]
         self.assertEqual([attempt["status"] for attempt in attempts], ["plan_complete_task_failed", "success"])
         self.assertEqual(attempts[0]["pending_count"], 1)
-        self.assertEqual(len(Library(self.root / "library").cases("P01")), 2)
+        self.assertEqual(len(Library(self.root / "library").cases("A02")), 2)
         self.assertEqual(report["status"], "complete")
         self.assertEqual(len(report["episodes"][0]["maintenance_runs"]), 2)
 
@@ -112,7 +114,7 @@ class CampaignTests(unittest.TestCase):
         self.assertEqual([attempt["native_success"] for attempt in attempts], [True, True])
         self.assertEqual([attempt["status"] for attempt in attempts], ["step_failed", "success"])
         self.assertEqual([request["stage"] for request in self.provider.requests].count("distill"), 1)
-        self.assertEqual(Library(self.root / "library").active("P01")["code"], GOOD)
+        self.assertEqual(Library(self.root / "library").active("A02")["code"], GOOD)
 
     def test_campaign_progress_is_written_before_starting_next_episode(self):
         snapshots = []
@@ -152,8 +154,8 @@ class CampaignTests(unittest.TestCase):
 
     def test_failed_episode_partial_work_is_published_before_reset(self):
         pre = step(identifier="pre", target=1, predicate="joint_near")
-        final = step(identifier="final", target=2, atom="P02", depends=["pre"])
-        fixtures = {"plan": [plan(pre, final), plan(step(atom="P02"))],
+        final = step(identifier="final", target=2, atom="A04", depends=["pre"])
+        fixtures = {"plan": [plan(pre, final), plan(step(atom="A04"))],
                     "repair": [candidate(GOOD), candidate(CLAIM), candidate(GOOD)],
                     "distill": [candidate(GOOD), candidate(GOOD)]}
         report, _ = self.run_campaign(fixtures, {"tasks": [{**self.task, "horizon": 4}], "maintain_after_task": True})
@@ -161,18 +163,18 @@ class CampaignTests(unittest.TestCase):
         attempts = report["episodes"][0]["episode_attempts"]
         self.assertEqual(attempts[0]["pending_count"], 1)
         library = Library(self.root / "library")
-        self.assertEqual(library.active("P01")["version"], 1)
-        self.assertEqual(len(library.cases("P01")), 1)
-        self.assertEqual(library.active("P02")["version"], 1)
+        self.assertEqual(library.active("A02")["version"], 1)
+        self.assertEqual(len(library.cases("A02")), 1)
+        self.assertEqual(library.active("A04")["version"], 1)
         self.assertEqual([request["stage"] for request in self.provider.requests].count("distill"), 2)
         context = [request["context"] for request in self.provider.requests if request["stage"] == "plan"][1]
         self.assertEqual(context["episode_retry"]["previous_episodes"][0]["completed_steps"][0]["code"], GOOD)
-        self.assertEqual(context["library"][0]["atom"], "P01")
+        self.assertEqual(context["library"][0]["atom"], "A02")
         self.assertNotIn("completed_steps", context)
 
     def test_single_failed_episode_retains_partial_published_skill(self):
         pre = step(identifier="pre", target=1, predicate="joint_near")
-        final = step(identifier="final", target=2, atom="P02", depends=["pre"])
+        final = step(identifier="final", target=2, atom="A04", depends=["pre"])
         fixtures = {"plan": [plan(pre, final)], "repair": [candidate(GOOD), candidate(CLAIM)],
                     "distill": [candidate(GOOD)]}
         report, _ = self.run_campaign(fixtures, {"tasks": [{**self.task, "horizon": 4}], "maintain_after_task": True,
@@ -181,12 +183,12 @@ class CampaignTests(unittest.TestCase):
         self.assertEqual(report["task_status"], "tasks_incomplete")
         self.assertEqual(report["maintenance_status"], "complete")
         self.assertEqual(report["promoted_versions"], 1)
-        self.assertEqual(report["episodes"][0]["maintenance"]["promoted"][0]["atom"], "P01")
-        self.assertEqual(Library(self.root / "library").active("P01")["version"], 1)
+        self.assertEqual(report["episodes"][0]["maintenance"]["promoted"][0]["atom"], "A02")
+        self.assertEqual(Library(self.root / "library").active("A02")["version"], 1)
 
     def test_atomic_maintenance_runs_with_live_main_environment_and_deduplicates_pending(self):
         pre = step(identifier="pre", target=1, predicate="joint_near")
-        final = step(identifier="final", target=2, atom="P02", depends=["pre"])
+        final = step(identifier="final", target=2, atom="A04", depends=["pre"])
         replay_observations = []
 
         def observed_factory(task, output):
@@ -216,10 +218,75 @@ class CampaignTests(unittest.TestCase):
         for run in runs:
             self.assertTrue((Path(run["output"]) / "summary.json").is_file())
 
+    def test_composite_prefix_distills_before_continuation_and_reuses_new_library(self):
+        pre = step(identifier="pre", target=1, predicate="joint_near")
+        final = step(identifier="final", target=2, atom="A04", depends=["pre"])
+        dependent = candidate('def skill(api, params):\n    return api.call("A02", params)\n')
+        dependent["dependencies"] = ["A02"]
+        fixtures = {"plan": [{**plan(pre), "plan_complete": False}, {**plan(final), "plan_complete": True}],
+                    "repair": [candidate(GOOD), dependent], "distill": [candidate(GOOD), dependent]}
+        report, _ = self.run_campaign(fixtures, {"tasks": [{**self.task, "horizon": 4}],
+            "maintain_after_task": True, "episode_retry": {"max_episodes": 1}})
+        self.assertEqual(report["status"], "complete", report)
+        self.assertEqual(report["total_episode_attempts"], 1)
+        self.assertEqual([r["stage"] for r in self.provider.requests],
+                         ["plan", "repair", "distill", "plan", "repair", "distill"])
+        continuation = self.provider.requests[3]["context"]
+        self.assertEqual(continuation["phase"], "continue_after_verified_prefix")
+        self.assertEqual(continuation["observation"]["joint"], 1)
+        self.assertEqual(continuation["initial_observation"]["joint"], 0)
+        self.assertEqual([r["step"]["id"] for r in continuation["completed_steps"]], ["pre"])
+        self.assertEqual([(r["atom"], r["version"]) for r in continuation["library"]], [("A02", 1)])
+        exploration = report["episodes"][0]["exploration"]
+        self.assertEqual(exploration["replans"], 0)
+        self.assertEqual(exploration["continuations"], 1)
+        self.assertEqual(exploration["stats"]["steps"], 2)
+        self.assertEqual(self.factory.instances[0].position, 2)
+        self.assertEqual(len(self.factory.instances), 3)  # One live episode and two fresh replays.
+        library = Library(self.root / "library")
+        self.assertEqual(library.active("A04")["dependencies"]["A02"]["version"], 1)
+        self.assertEqual(report["promoted_versions"], 2)
+
+    def test_composite_empty_continuation_keeps_published_prefix(self):
+        pre = step(identifier="pre", target=1, predicate="joint_near")
+        blocker = "Remaining step has no supported verifier"
+        fixtures = {"plan": [{**plan(pre), "plan_complete": False}, {"steps": [], "reasoning": blocker}],
+                    "repair": [candidate(GOOD)], "distill": [candidate(GOOD)]}
+        report, _ = self.run_campaign(fixtures, {"tasks": [{**self.task, "horizon": 4}],
+            "maintain_after_task": True, "episode_retry": {"max_episodes": 1}})
+        self.assertEqual(report["task_status"], "tasks_incomplete")
+        self.assertEqual(report["maintenance_status"], "complete")
+        self.assertEqual(report["promoted_versions"], 1)
+        exploration = report["episodes"][0]["exploration"]
+        self.assertEqual(exploration["stop_reason"], {
+            "kind": "planner_returned_empty_continuation", "summary": blocker})
+        self.assertFalse(exploration["native_success"])
+        self.assertEqual(len(exploration["pending"]), 1)
+        self.assertEqual(exploration["failures"], [])
+        self.assertEqual(Library(self.root / "library").active("A02")["version"], 1)
+        experience = read_json(exploration["pending"][0])
+        self.assertFalse(experience["require_native_success"])
+        self.assertEqual(experience["validation_scope"], "atomic")
+        self.assertEqual(len(report["maintenance_runs"]), 1)
+
+    def test_composite_continuation_provider_error_keeps_published_prefix(self):
+        pre = step(identifier="pre", target=1, predicate="joint_near")
+        fixtures = {"plan": [{**plan(pre), "plan_complete": False}],
+                    "repair": [candidate(GOOD)], "distill": [candidate(GOOD)]}
+        report, _ = self.run_campaign(fixtures, {"tasks": [{**self.task, "horizon": 4}],
+            "maintain_after_task": True, "episode_retry": {"max_episodes": 1}})
+        self.assertEqual(report["task_status"], "tasks_incomplete")
+        self.assertEqual(report["maintenance_status"], "complete")
+        self.assertEqual(report["promoted_versions"], 1)
+        self.assertEqual(report["episodes"][0]["exploration"]["status"], "error")
+        self.assertEqual(report["episodes"][0]["exploration"]["error"]["type"], "ProviderError")
+        self.assertEqual(Library(self.root / "library").active("A02")["version"], 1)
+        self.assertEqual(len(report["maintenance_runs"]), 1)
+
     def test_episode_trigger_maintains_every_failed_episode_with_unlimited_retry(self):
         pre = step(identifier="pre", target=1, predicate="joint_near")
-        final = step(identifier="final", target=2, atom="P02", depends=["pre"])
-        fixtures = {"plan": [plan(pre, final), plan(step(atom="P02"))],
+        final = step(identifier="final", target=2, atom="A04", depends=["pre"])
+        fixtures = {"plan": [plan(pre, final), plan(step(atom="A04"))],
                     "repair": [candidate(GOOD), candidate(CLAIM), candidate(GOOD)],
                     "distill": [candidate(GOOD), candidate(GOOD)]}
         report, _ = self.run_campaign(fixtures, {"tasks": [{**self.task, "horizon": 4}],
@@ -234,7 +301,7 @@ class CampaignTests(unittest.TestCase):
 
     def test_maintenance_exception_does_not_interrupt_later_atoms(self):
         pre = step(identifier="pre", target=1, predicate="joint_near")
-        final = step(identifier="final", target=2, atom="P02", depends=["pre"])
+        final = step(identifier="final", target=2, atom="A04", depends=["pre"])
         fixtures = {"plan": [plan(pre, final)], "repair": [candidate(GOOD), candidate(GOOD)],
                     "distill": [candidate(GOOD)]}
         original = MaintenanceLoop.run
@@ -261,8 +328,8 @@ class CampaignTests(unittest.TestCase):
 
     def test_maintenance_exception_does_not_block_episode_reset(self):
         pre = step(identifier="pre", target=1, predicate="joint_near")
-        final = step(identifier="final", target=2, atom="P02", depends=["pre"])
-        fixtures = {"plan": [plan(pre, final), plan(step(atom="P02"))],
+        final = step(identifier="final", target=2, atom="A04", depends=["pre"])
+        fixtures = {"plan": [plan(pre, final), plan(step(atom="A04"))],
                     "repair": [candidate(GOOD), candidate(CLAIM), candidate(GOOD)]}
         with patch("evo.cli.MaintenanceLoop.run", side_effect=RuntimeError("Synthetic replay error")) as mocked:
             report, _ = self.run_campaign(fixtures, {"tasks": [{**self.task, "horizon": 4}],
@@ -321,12 +388,12 @@ class CampaignTests(unittest.TestCase):
 
     def test_legacy_one_episode_partial_maintenance_is_preserved(self):
         pre = step(identifier="pre", target=1, predicate="joint_near")
-        final = step(identifier="final", target=2, atom="P02", depends=["pre"])
+        final = step(identifier="final", target=2, atom="A04", depends=["pre"])
         fixtures = {"plan": [plan(pre, final)], "repair": [candidate(GOOD), candidate(CLAIM)], "distill": [candidate(GOOD)]}
         report, _ = self.run_campaign(fixtures, {"tasks": [{**self.task, "horizon": 4}], "maintain_after_task": True,
                                                 "episode_retry": "legacy"})
         self.assertEqual(len(report["episodes"][0]["episode_attempts"]), 1)
-        self.assertEqual(Library(self.root / "library").active("P01")["version"], 1)
+        self.assertEqual(Library(self.root / "library").active("A02")["version"], 1)
 
     def test_maintenance_failure_does_not_reset_successful_task(self):
         fixtures = {"plan": [plan()], "repair": [candidate(GOOD)], "distill": [candidate(BAD)]}

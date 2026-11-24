@@ -1,5 +1,6 @@
 """The control/verdict boundary is tested without installing a simulator."""
 from contextlib import nullcontext
+import json
 import sys
 from types import SimpleNamespace, ModuleType
 
@@ -91,14 +92,14 @@ def test_host_evaluation_ignores_generated_success_claims(tmp_path):
 
 def test_runtime_has_no_verdict_or_native_environment_api(tmp_path):
     runtime = RuntimeAPI(adapter(tmp_path), lambda skill, values: (skill, values))
-    assert runtime.call("P03", {"duration": 1}) == ("P03", {"duration": 1})
+    assert runtime.call("A05", {"duration": 1}) == ("A05", {"duration": 1})
     for forbidden in ("native_success", "evaluate", "sim", "env", "_backend", "adapter"):
         assert not hasattr(runtime, forbidden)
 
 
 def test_unbound_dependency_is_explicit(tmp_path):
     with pytest.raises(ValueError, match="No committed"):
-        RuntimeAPI(adapter(tmp_path)).call("P01", {})
+        RuntimeAPI(adapter(tmp_path)).call("A02", {})
 
 
 def test_deproject_uses_depth_and_camera_coordinates(tmp_path):
@@ -218,6 +219,91 @@ def test_constructor_closes_native_backend_when_initialization_fails(tmp_path, m
 
 
 @pytest.fixture
+def constructor_backend(monkeypatch):
+    """Capture the real adapter constructor boundary without building a scene."""
+    import evo.robocasa_adapter as module
+    calls = []
+
+    class InitializingBackend(Backend):
+        def __init__(self, *args, **kwargs):
+            super().__init__()
+            self.horizon = 1000
+            self.env = SimpleNamespace(horizon=1000)
+            self.closed = False
+            calls.append((args, kwargs, self))
+
+        def reset(self, seed):
+            self.budgets_at_reset = (self.horizon, self.env.horizon,
+                                     self.configured_max_steps, self._max_steps)
+
+        def goal_text(self):
+            return "test instruction"
+
+        def close(self):
+            self.closed = True
+
+    backend_module = ModuleType("roboenv_runtime.adapters.robocasa.backend")
+    backend_module.RoboCasaEnv = InitializingBackend
+    monkeypatch.setitem(sys.modules, backend_module.__name__, backend_module)
+    monkeypatch.setattr(module, "_renderer_compatibility", nullcontext)
+    monkeypatch.setattr(module.RoboCasaAdapter, "_build_robot_geometry",
+                        lambda self: setattr(self, "_fk_validation", {"passed": True}))
+    return calls
+
+
+def test_constructor_applies_official_pretrain_scene_and_task_budget(tmp_path, constructor_backend):
+    item = RoboCasaAdapter("TestTask", seed=3, output_dir=tmp_path,
+                           scene_split="pretrain", horizon=7200,
+                           camera_size=(512, 512))
+    args, kwargs, native = constructor_backend[0]
+    assert args == ("TestTask",)
+    assert kwargs["layout_ids"] == kwargs["style_ids"] == -2
+    assert kwargs["obj_instance_split"] == "pretrain"
+    assert kwargs["max_steps"] == 7200
+    assert kwargs["camera_size"] == (512, 512)
+    assert kwargs["stop_on_success"] is True
+    assert native.budgets_at_reset == (7200, 7200, 7200, 7200)
+    assert item.horizon == native.horizon == native.env.horizon == 7200
+    initialize = json.loads((tmp_path / "control_events.jsonl").read_text())
+    assert initialize["scene_split"] == "pretrain"
+    assert initialize["horizon"] == 7200
+
+
+def test_constructor_accepts_matching_pretrain_group_ids(tmp_path, constructor_backend):
+    RoboCasaAdapter("TestTask", output_dir=tmp_path, scene_split="pretrain",
+                    layout_ids=-2, style_ids=-2)
+    _, kwargs, _ = constructor_backend[0]
+    assert kwargs["layout_ids"] == kwargs["style_ids"] == -2
+    assert "max_steps" not in kwargs
+
+
+def test_constructor_without_protocol_options_preserves_legacy_inputs(tmp_path, constructor_backend):
+    item = RoboCasaAdapter("TestTask", output_dir=tmp_path,
+                           layout_ids=[1], style_ids=[2])
+    _, kwargs, native = constructor_backend[0]
+    assert kwargs["layout_ids"] == [1]
+    assert kwargs["style_ids"] == [2]
+    assert "obj_instance_split" not in kwargs and "max_steps" not in kwargs
+    assert item.horizon == 1000
+    assert native.budgets_at_reset == (1000, 1000, 1000, 1000)
+
+
+@pytest.mark.parametrize("options", [
+    {"scene_split": "target"}, {"scene_split": "all"}, {"scene_split": False},
+    {"horizon": 0}, {"horizon": -1}, {"horizon": True},
+    {"horizon": 300.0}, {"horizon": "300"}, {"horizon": float("nan")},
+    {"scene_split": "pretrain", "layout_ids": 1},
+    {"scene_split": "pretrain", "style_ids": -3},
+    {"scene_split": "pretrain", "layout_ids": [11, 12]},
+])
+def test_constructor_rejects_invalid_or_conflicting_protocol_before_build(
+        tmp_path, constructor_backend, options):
+    with pytest.raises(ValueError):
+        RoboCasaAdapter("TestTask", output_dir=tmp_path, **options)
+    assert constructor_backend == []
+
+
+@pytest.fixture
 def semantic_adapter(tmp_path, monkeypatch):
     item = adapter(tmp_path)
     utilities = SimpleNamespace()
@@ -313,6 +399,130 @@ def test_fixture_joint_uses_native_normalization_and_validates_ownership(semanti
     for extra in ({"joint": "unrelated_joint"}, {"min": -1.}, {"max": float("inf")}):
         assert not item.evaluate({**base, **extra})["known"]
     assert len(calls) == 1
+
+
+def test_native_fixture_aliases_unwrap_region_tuples_without_exposing_geometry(semantic_adapter):
+    item, _ = semantic_adapter
+    counter = SimpleNamespace(name="counter_1", joints=[], pos=[5., 8., 1.])
+    cabinet = SimpleNamespace(name="cabinet_1", joints=["door"], pos=[6., 8., 1.])
+    env = item._backend.env
+    env.fixtures = {"counter_1": counter, "cabinet_1": cabinet}
+    env.fixture_refs = {"counter": (counter, True), "cab": cabinet,
+                        "invalid": (SimpleNamespace(name="other"), False)}
+    catalog = item._semantic_catalog()
+    assert catalog["fixture_aliases"] == {"counter": "counter_1", "cab": "cabinet_1"}
+    assert all(set(fixture) == {"id", "type", "joints"} for fixture in catalog["fixtures"])
+    assert item._fixture("counter") is counter
+    assert item._fixture("cab") is cabinet
+    with pytest.raises(KeyError):
+        item._fixture("invalid")
+
+
+def test_base_odometry_uses_episode_origin_and_not_world_coordinates(tmp_path):
+    from scipy.spatial.transform import Rotation
+    item = adapter(tmp_path)
+    origin = np.eye(4)
+    origin[:3, :3] = Rotation.from_euler("z", np.pi/2).as_matrix()
+    origin[:3, 3] = [5., -2., .1]
+    current = origin.copy()
+    current[:3, 3] += [0., .3, 0.]
+    current[:3, :3] = origin[:3, :3] @ Rotation.from_euler("z", .2).as_matrix()
+    item._initial_base_transform = origin
+    item._world_base_transform = lambda: current
+    observed = item._base_observation()
+    assert np.allclose(observed["position"], [.3, 0., 0.])
+    assert observed["yaw"] == pytest.approx(.2)
+    assert observed["frame"] == "episode_initial_base"
+    assert observed["control_velocity_frame"] == "native_backend"
+    assert observed["control_units"] == "normalized_native_velocity"
+    verdict = item.evaluate({"predicate": "base_near", "args": {"position": [.3, 0], "yaw": .2}})
+    assert verdict["known"] and verdict["success"]
+    assert not item.evaluate({"predicate": "base_near", "position": [5., -1.7]})["success"]
+
+
+def test_base_arrival_heading_wrap_and_optional_orientation(tmp_path):
+    item = adapter(tmp_path)
+    item._base_observation = lambda: {"position": [.2, -.1, 0], "yaw": np.pi-.01}
+    condition = {"predicate": "base_near", "position": [.2, -.1], "yaw": -np.pi+.01, "yaw_tolerance": .03}
+    assert item.evaluate(condition)["success"]
+    assert not item.evaluate({**condition, "yaw_tolerance": .01})["success"]
+    assert item.evaluate({"predicate": "base_near", "position": [.2, -.1]})["success"]
+    for invalid in ({"position": [float("nan"), 0]}, {"position_tolerance": -1},
+                    {"yaw_tolerance": float("inf")}, {"yaw": float("nan")}, {"frame": "world"}):
+        with pytest.raises(ValueError):
+            item.evaluate({**condition, **invalid})
+
+
+@pytest.fixture
+def support_adapter(semantic_adapter, monkeypatch):
+    item, _ = semantic_adapter
+    env = item._backend.env
+    obj = SimpleNamespace(root_body="object_body", contact_geoms=["object_collision"])
+    fixture = SimpleNamespace(name="counter", contact_geoms=["counter_collision"])
+    env.objects["obj"], env.fixtures["counter"] = obj, fixture
+    env.robots = [SimpleNamespace(gripper={"right": object()})]
+    state = {"gripper_contact": False, "linear": np.zeros(3), "angular": np.zeros(3), "force": .981}
+    env.check_contact = lambda gripper, object_: state["gripper_contact"]
+    contact = SimpleNamespace(geom1=2, geom2=1, frame=np.array([0., 0., 1., 1., 0., 0., 0., 1., 0.]))
+    data = SimpleNamespace(ncon=1, contact=[contact])
+    model = SimpleNamespace(opt=SimpleNamespace(gravity=np.array([0., 0., -9.81])), body_subtreemass=np.array([.1]))
+    names = {"object_collision": 1, "counter_collision": 2, "other_collision": 3}
+    item._backend.sim = SimpleNamespace(
+        model=SimpleNamespace(_model=model, body_name2id=lambda name: 0, geom_name2id=names.__getitem__),
+        data=SimpleNamespace(_data=data, get_body_xvelp=lambda name: state["linear"],
+                             get_body_xvelr=lambda name: state["angular"]))
+    module = ModuleType("mujoco")
+    def contact_force(actual_model, actual_data, index, result):
+        assert actual_model is model and actual_data is data
+        result[0] = state["force"]
+    module.mj_contactForce = contact_force
+    monkeypatch.setitem(sys.modules, "mujoco", module)
+    return item, state, contact, data
+
+
+def test_released_object_support_requires_loaded_upward_contact_in_either_geom_order(support_adapter):
+    item, state, contact, _ = support_adapter
+    condition = {"predicate": "object_on_fixture", "object": "obj", "fixture": "counter"}
+    result = item.evaluate(condition)
+    assert result["known"] and result["success"]
+    assert result["evidence"] == {"step": 0}  # No object pose, force or velocity reaches the policy.
+    contact.geom1, contact.geom2 = contact.geom2, contact.geom1
+    contact.frame[:3] *= -1
+    assert item.evaluate(condition)["success"]
+    state["force"] = .1  # A lightly touching fixture does not carry the object's weight.
+    assert not item.evaluate(condition)["success"]
+
+
+@pytest.mark.parametrize("failure", ["side", "ceiling", "zero_force", "hovering", "wrong_fixture", "held", "sliding", "spinning"])
+def test_surface_contact_does_not_misclassify_nonplacements(support_adapter, failure):
+    item, state, contact, data = support_adapter
+    if failure == "side":
+        contact.frame[:3] = [1., 0., 0.]
+    elif failure == "ceiling":
+        contact.frame[:3] = [0., 0., -1.]
+    elif failure == "zero_force":
+        state["force"] = 0.
+    elif failure == "hovering":
+        data.ncon = 0
+    elif failure == "wrong_fixture":
+        contact.geom1 = 3
+    elif failure == "held":
+        state["gripper_contact"] = True
+    elif failure == "sliding":
+        state["linear"] = np.array([.04, 0, 0])
+    elif failure == "spinning":
+        state["angular"] = np.array([0, 0, .3])
+    result = item.evaluate({"predicate": "object_on_fixture", "object": "obj", "fixture": "counter"})
+    assert result["known"] and not result["success"]
+
+
+def test_support_predicate_reports_unknown_ids_and_invalid_measurements(support_adapter):
+    item, state, _, _ = support_adapter
+    condition = {"predicate": "object_on_fixture", "object": "obj", "fixture": "counter"}
+    assert not item.evaluate({**condition, "object": "missing"})["known"]
+    assert not item.evaluate({**condition, "fixture": "missing"})["known"]
+    state["linear"] = np.array([float("nan"), 0, 0])
+    assert not item.evaluate(condition)["known"]
 
 
 @pytest.mark.parametrize("mode", ["success", "horizon", "native_stop"])

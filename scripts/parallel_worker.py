@@ -13,6 +13,7 @@ import subprocess
 import sys
 import time
 import traceback
+import uuid
 
 
 def write(path, value):
@@ -195,7 +196,11 @@ def supervise(plan_path, poll_seconds=1):
     except BlockingIOError:
         supervisor_lock.close()
         raise RuntimeError("Another supervisor already owns this campaign queue")
+    # All children of this immutable runtime share a cache epoch. A supervisor
+    # restart always creates a new epoch; old-run proofs cannot skip new checks.
+    replay_cache_session = uuid.uuid4().hex
     receipt = {"status": "initializing", "job": plan["job"], "preflight": plan["preflight"],
+               "replay_cache_session": replay_cache_session,
                "node": os.environ.get("EVO_NODE_NAME"), "gpu_requested": 8, "workers": [],
                "max_parallel": max_parallel, "completion_mode": plan.get("completion_mode", "all_success"),
                "low_utilization_waiver": plan.get("low_utilization_waiver")}
@@ -222,7 +227,8 @@ def supervise(plan_path, poll_seconds=1):
         log = Path(record["log"]).open("a")
         try:
             process = subprocess.Popen(child_command(plan_path, task_index, probe_only, scene),
-                env=worker_environment(os.environ, directory, assignment), stdout=log,
+                env=worker_environment({**os.environ, "EVO_REPLAY_CACHE_SESSION": replay_cache_session},
+                                       directory, assignment), stdout=log,
                 stderr=subprocess.STDOUT, start_new_session=True)
         except Exception as error:
             log.close()
@@ -393,16 +399,26 @@ def supervise(plan_path, poll_seconds=1):
         write(receipt_path, receipt)
         if not plan["preflight"] and receipt["status"] in {"complete", "complete_with_failures", "workers_failed"}:
             try:
-                try:
-                    from summarize_parallel_campaign import summarize_campaign, write_summary
-                except ModuleNotFoundError:
-                    from scripts.summarize_parallel_campaign import summarize_campaign, write_summary
-                summary = summarize_campaign(plan_path, receipt_path=receipt_path)
-                write_summary(summary, root / "campaign_summary.json", root / "tool_report.json")
-                receipt["final_summary"] = str(root / "campaign_summary.json")
-                receipt["tool_report"] = str(root / "tool_report.json")
-                event(root, "campaign_summary", status=summary.get("status"),
-                      counts=summary.get("counts", {}), tool_counts=summary.get("tools", {}).get("counts", {}))
+                if plan.get("mode") == "evaluate_policy":
+                    try:
+                        from summarize_policy_evaluation import summarize_evaluation, write_summary
+                    except ModuleNotFoundError:
+                        from scripts.summarize_policy_evaluation import summarize_evaluation, write_summary
+                    summary = summarize_evaluation(plan_path, receipt_path=receipt_path)
+                    write_summary(summary, root / "evaluation_summary.json")
+                    receipt["final_summary"] = str(root / "evaluation_summary.json")
+                    event(root, "evaluation_summary", status=summary.get("status"), counts=summary.get("counts", {}))
+                else:
+                    try:
+                        from summarize_parallel_campaign import summarize_campaign, write_summary
+                    except ModuleNotFoundError:
+                        from scripts.summarize_parallel_campaign import summarize_campaign, write_summary
+                    summary = summarize_campaign(plan_path, receipt_path=receipt_path)
+                    write_summary(summary, root / "campaign_summary.json", root / "tool_report.json")
+                    receipt["final_summary"] = str(root / "campaign_summary.json")
+                    receipt["tool_report"] = str(root / "tool_report.json")
+                    event(root, "campaign_summary", status=summary.get("status"),
+                          counts=summary.get("counts", {}), tool_counts=summary.get("tools", {}).get("counts", {}))
             except Exception as error:
                 receipt["summary_error"] = {"type": type(error).__name__, "message": str(error)}
                 event(root, "summary_error", error=receipt["summary_error"])

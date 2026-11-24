@@ -26,10 +26,10 @@ CLAIM = 'def skill(api, params):\n    return {"success": True, "target": params[
 
 
 def candidate(code):
-    return {"code": code, "rationale": "Explicit unit-test fixture", "dependencies": []}
+    return {"code": code, "description": "Toy joint move: target in plant units; returns motion diagnostics, no physical RoboCasa claim.", "rationale": "Explicit unit-test fixture", "dependencies": []}
 
 
-def step(identifier="move", target=2, atom="P01", predicate="native_success", depends=None):
+def step(identifier="move", target=2, atom="A02", predicate="native_success", depends=None):
     return {"id": identifier, "atom": atom, "params": {"target": target}, "goal": "Move measured joint to target",
             "postcondition": {"predicate": predicate, "args": {"target": [target]}}, "depends_on": depends or []}
 
@@ -165,8 +165,8 @@ class LoopTests(unittest.TestCase):
         self.assertTrue(result["native_success"])
         self.assertEqual(len(result["failures"]), 1)
         self.assertEqual(len(result["pending"]), 1)
-        self.assertEqual(len(self.library.lessons("P01")), 1)
-        self.assertIsNone(self.library.active("P01"))
+        self.assertEqual(len(self.library.lessons("A02")), 1)
+        self.assertIsNone(self.library.active("A02"))
         repairs = [request for request in self.provider.requests if request["stage"] == "repair"]
         self.assertEqual(repairs[1]["context"]["observation"]["joint"], 1)
         self.assertFalse(repairs[1]["context"]["failures"][0]["verification"]["success"])
@@ -177,7 +177,7 @@ class LoopTests(unittest.TestCase):
         self.assertEqual(result["status"], "step_failed")
         self.assertFalse(result["native_success"])
         self.assertFalse(result["pending"])
-        self.assertIsNone(self.library.active("P01"))
+        self.assertIsNone(self.library.active("A02"))
 
     def test_fresh_validation_rejects_recovery_that_needs_failed_attempt_state(self):
         recovery = ('def skill(api, params):\n    current = api.observe()["joint"]\n'
@@ -187,7 +187,7 @@ class LoopTests(unittest.TestCase):
         maintained = self.maintain(explored["pending"], {"distill": [candidate(recovery)]})
         self.assertFalse(maintained["promoted"])
         self.assertEqual(len(maintained["rejected"]), 1)
-        self.assertIsNone(self.library.active("P01"))
+        self.assertIsNone(self.library.active("A02"))
         self.assertEqual(len(self.factory.instances), 2)
         self.assertEqual(self.factory.instances[0].position, 2)
         self.assertEqual(self.factory.instances[1].position, 1)
@@ -198,7 +198,7 @@ class LoopTests(unittest.TestCase):
         maintained = self.maintain(explored["pending"], {"distill": [candidate(BAD), candidate(GOOD)]}, max_candidates=2)
         self.assertEqual(len(maintained["proposals"]), 2)
         self.assertEqual(len(maintained["promoted"]), 1)
-        self.assertEqual(self.library.active("P01")["code"], GOOD)
+        self.assertEqual(self.library.active("A02")["code"], GOOD)
         self.assertEqual(len(self.factory.instances), 3)
 
     def test_parallel_maintenance_serializes_same_atom_without_losing_experiences(self):
@@ -237,8 +237,8 @@ class LoopTests(unittest.TestCase):
         self.assertEqual([report["promoted"][0]["version"] for report in reports], [1, 2])
         self.assertEqual([len(report["proposals"]) for report in reports], [1, 1])
         self.assertEqual([len(report["proposals"][0]["validation"]["cases"]) for report in reports], [1, 2])
-        active = self.library.active("P01")
-        self.assertEqual(set(active["case_ids"]), {case["id"] for case in self.library.cases("P01")})
+        active = self.library.active("A02")
+        self.assertEqual(set(active["case_ids"]), {case["id"] for case in self.library.cases("A02")})
 
     def test_unvalidated_case_added_during_replay_does_not_block_promotion(self):
         first = self.explore({"plan": [plan()], "repair": [candidate(GOOD)]})
@@ -255,7 +255,7 @@ class LoopTests(unittest.TestCase):
             if not added:
                 added = True
                 self.library.register_case(added_case)
-                self.library.add_lesson("P01", "Another explorer added a new binding")
+                self.library.add_lesson("A02", "Another explorer added a new binding")
             return promote(candidate_id)
 
         with patch.object(self.library, "promote", side_effect=add_obligation_before_publish):
@@ -266,12 +266,12 @@ class LoopTests(unittest.TestCase):
         self.assertEqual([len(item["validation"]["cases"]) for item in maintained["proposals"]], [1])
         requests = [request["context"] for request in self.provider.requests if request["stage"] == "distill"]
         self.assertEqual([len(request["regression_cases"]) for request in requests], [0])
-        self.assertEqual(len(self.library.active("P01")["case_ids"]), 1)
-        self.assertEqual(len(self.library.pending_cases("P01")), 1)
+        self.assertEqual(len(self.library.active("A02")["case_ids"]), 1)
+        self.assertEqual(len(self.library.pending_cases("A02")), 1)
 
     def test_upgrade_must_replay_old_and_new_bindings(self):
         self.learn_first()
-        first_hash = self.library.active("P01")["sha256"]
+        first_hash = self.library.active("A02")["sha256"]
         fresh_library = Library(self.root / "independent-exploration-library")
         new_task = {"task": "toy_plant", "seed": 2, "goal": 3}
         explored = self.explore({"plan": [plan(step(target=3))], "repair": [candidate(GOOD)]},
@@ -283,27 +283,27 @@ class LoopTests(unittest.TestCase):
         results = rejected["proposals"][0]["validation"]["cases"]
         self.assertEqual(len(results), 2)
         self.assertEqual(sorted(case["success"] for case in results), [False, True])
-        self.assertEqual(self.library.active("P01")["sha256"], first_hash)
+        self.assertEqual(self.library.active("A02")["sha256"], first_hash)
         accepted = self.maintain(explored["pending"], {"distill": [candidate(GOOD)]})
         self.assertEqual(accepted["promoted"][0]["version"], 2)
-        self.assertEqual(len(self.library.active("P01")["case_ids"]), 2)
+        self.assertEqual(len(self.library.active("A02")["case_ids"]), 2)
 
     def test_prefix_is_replayed_in_each_fresh_environment(self):
-        first = step(identifier="pre", target=1, atom="P01", predicate="joint_near")
-        second = step(identifier="final", target=2, atom="P02", depends=["pre"])
+        first = step(identifier="pre", target=1, atom="A02", predicate="joint_near")
+        second = step(identifier="final", target=2, atom="A04", depends=["pre"])
         use_prefix = ('def skill(api, params):\n    current = api.observe()["joint"]\n'
                       '    api.move_joints([current + params["target"] / 2])\n    return {}\n')
         explored = self.explore({"plan": [plan(first, second)], "repair": [candidate(GOOD), candidate(use_prefix)]})
         self.assertTrue(explored["native_success"])
         maintained = self.maintain([explored["pending"][1]], {"distill": [candidate(use_prefix)]})
-        self.assertEqual(maintained["promoted"][0]["atom"], "P02")
+        self.assertEqual(maintained["promoted"][0]["atom"], "A04")
         replay = maintained["proposals"][0]["validation"]["cases"][0]
         self.assertEqual(len(replay["prefix"]), 1)
         self.assertEqual(replay["stats"]["steps"], 2)
 
     def test_entry_trace_retains_failed_preparation_from_previous_atom(self):
         first = step(identifier="pre", target=1, predicate="joint_near")
-        final = step(identifier="final", target=2, atom="P02", depends=["pre"])
+        final = step(identifier="final", target=2, atom="A04", depends=["pre"])
         prepare = ('def skill(api, params):\n    api.gripper(-1)\n'
                    '    api.move_joints([params["target"] / 2])\n    return {}\n')
         needs_open = ('def skill(api, params):\n'
@@ -338,14 +338,14 @@ class LoopTests(unittest.TestCase):
             {**candidate(increment), "params": {"delta": 2}}]})
         self.assertEqual(len(maintained["promoted"]), 1)
         self.assertEqual(self.provider.requests[0]["context"]["observation"]["joint"], 0)
-        case = self.library.cases("P01")[0]
+        case = self.library.cases("A02")[0]
         self.assertEqual(case["step"]["params"], {"delta": 2})
         self.assertEqual(case["step"]["postcondition"], planned["postcondition"])
         self.assertEqual(read_json(explored["pending"][0]), source)
 
     def test_trace_preserves_failed_program_whose_physical_condition_became_true(self):
         first = step(identifier="pre", target=1, predicate="joint_near")
-        final = step(identifier="final", target=2, atom="P02", depends=["pre"])
+        final = step(identifier="final", target=2, atom="A04", depends=["pre"])
         moves_then_raises = ('def skill(api, params):\n'
             '    api.move_joints([params["target"]])\n'
             '    if params.get("raise", True):\n        raise ValueError("after motion")\n    return {}\n')
@@ -359,7 +359,7 @@ class LoopTests(unittest.TestCase):
 
     def test_failed_prefix_case_does_not_poison_later_independent_case(self):
         pre = step(identifier="pre", target=1, predicate="joint_near")
-        final = step(identifier="final", target=2, atom="P02", depends=["pre"])
+        final = step(identifier="final", target=2, atom="A04", depends=["pre"])
         explored = self.explore({"plan": [plan(pre, final)],
             "repair": [candidate(GOOD), candidate(GOOD)]})
         experience = read_json(explored["pending"][1])
@@ -373,16 +373,16 @@ class LoopTests(unittest.TestCase):
         replay = rejected["proposals"][0]["validation"]["cases"][0]
         self.assertEqual(replay["failure_stage"], "prefix")
         self.assertNotIn("execution", replay)
-        self.assertEqual(self.library.cases("P02"), [])
-        fresh = self.explore({"plan": [plan(step(atom="P02"))], "repair": [candidate(GOOD)]})
+        self.assertEqual(self.library.cases("A04"), [])
+        fresh = self.explore({"plan": [plan(step(atom="A04"))], "repair": [candidate(GOOD)]})
         accepted = self.maintain(fresh["pending"], {"distill": [candidate(GOOD)]})
         self.assertEqual(len(accepted["promoted"]), 1)
-        self.assertEqual(len(self.library.cases("P02")), 1)
-        self.assertEqual(len(self.library.pending_cases("P02")), 1)
+        self.assertEqual(len(self.library.cases("A04")), 1)
+        self.assertEqual(len(self.library.pending_cases("A04")), 1)
 
     def test_atomic_success_that_breaks_task_suffix_cannot_be_published(self):
         pre = step(identifier="pre", target=1, predicate="joint_near")
-        final = step(identifier="final", target=2, atom="P02", depends=["pre"])
+        final = step(identifier="final", target=2, atom="A04", depends=["pre"])
         needs_closed_gripper = ('def skill(api, params):\n'
                                 '    if api.observe()["gripper_closed"]:\n'
                                 '        api.move_joints([params["target"]])\n'
@@ -390,7 +390,7 @@ class LoopTests(unittest.TestCase):
         explored = self.explore({"plan": [plan(pre, final)],
                                  "repair": [candidate(GOOD), candidate(needs_closed_gripper)]})
         self.assertTrue(explored["native_success"])
-        continuation_path = Path(explored["pending"][0]).parent.parent / "continuations" / "01_P01.json"
+        continuation_path = Path(explored["pending"][0]).parent.parent / "continuations" / "01_A02.json"
         experience = read_json(continuation_path)
         self.assertTrue(experience["require_native_success"])
         self.assertEqual(len(experience["suffix"]), 1)
@@ -407,9 +407,9 @@ class LoopTests(unittest.TestCase):
         self.assertFalse(replay["native_success"])
         self.assertEqual(replay["error"], "Downstream task replay failed")
         self.assertEqual(len(replay["suffix"]), 1)
-        self.assertIsNone(self.library.active("P01"))
+        self.assertIsNone(self.library.active("A02"))
         accepted = self.maintain([continuation_path], {"distill": [candidate(GOOD)]})
-        self.assertEqual(accepted["promoted"][0]["atom"], "P01")
+        self.assertEqual(accepted["promoted"][0]["atom"], "A02")
 
     def test_repair_can_replace_scene_bindings_without_changing_goal(self):
         planned = step(target=2)
@@ -431,14 +431,14 @@ class LoopTests(unittest.TestCase):
         self.assertEqual(experience["step"]["params"], corrected["params"])
         maintained = self.maintain(explored["pending"], {"distill": [candidate(GOOD)]})
         self.assertEqual(len(maintained["promoted"]), 1)
-        stored_case = self.library.cases("P01")[0]
+        stored_case = self.library.cases("A02")[0]
         self.assertEqual(stored_case["step"]["params"], corrected["params"])
         self.assertEqual(stored_case["step"]["postcondition"], planned["postcondition"])
-        self.assertIn('params["target"]', self.library.active("P01")["code"])
+        self.assertIn('params["target"]', self.library.active("A02")["code"])
 
     def test_suffix_verifier_exception_cannot_leave_atomic_success_promotable(self):
         pre = step(identifier="pre", target=1, predicate="joint_near")
-        final = step(identifier="final", target=2, atom="P02", depends=["pre"])
+        final = step(identifier="final", target=2, atom="A04", depends=["pre"])
         explored = self.explore({"plan": [plan(pre, final)],
                                  "repair": [candidate(GOOD), candidate(GOOD)]})
         self.assertTrue(explored["native_success"])
@@ -450,14 +450,14 @@ class LoopTests(unittest.TestCase):
                 return super().evaluate(postcondition)
 
         self.factory = BrokenSuffixVerifier
-        continuation_path = Path(explored["pending"][0]).parent.parent / "continuations" / "01_P01.json"
+        continuation_path = Path(explored["pending"][0]).parent.parent / "continuations" / "01_A02.json"
         result = self.maintain([continuation_path], {"distill": [candidate(GOOD)]})
         self.assertFalse(result["promoted"])
         replay = result["proposals"][0]["validation"]["cases"][0]
         self.assertTrue(replay["atomic_success"])
         self.assertFalse(replay["success"])
         self.assertEqual(replay["error"]["type"], "RuntimeError")
-        self.assertIsNone(self.library.active("P01"))
+        self.assertIsNone(self.library.active("A02"))
 
     def test_published_skill_is_reused_without_requesting_code(self):
         self.learn_first()
@@ -469,26 +469,26 @@ class LoopTests(unittest.TestCase):
 
     def test_reused_active_skill_registers_new_regression_binding(self):
         self.learn_first()
-        self.assertEqual(len(self.library.cases("P01")), 1)
+        self.assertEqual(len(self.library.cases("A02")), 1)
         result = self.explore({"plan": [plan(step(target=3))]}, task={"task": "toy_plant", "seed": 2, "goal": 3})
         self.assertTrue(result["native_success"])
-        self.assertEqual(len(self.library.cases("P01")), 1)
+        self.assertEqual(len(self.library.cases("A02")), 1)
         maintained = self.maintain(result["pending"], {})
         self.assertEqual(maintained["promoted"], [])
         self.assertEqual(len(maintained["accepted_cases"]), 1)
-        self.assertEqual(len(self.library.cases("P01")), 2)
-        self.assertEqual(self.library.active("P01")["version"], 1)
+        self.assertEqual(len(self.library.cases("A02")), 2)
+        self.assertEqual(self.library.active("A02")["version"], 1)
 
     def test_already_satisfied_step_is_not_learned(self):
         already_done = step(identifier="already", target=0, predicate="joint_near")
-        final = step(identifier="final", target=2, atom="P02", depends=["already"])
+        final = step(identifier="final", target=2, atom="A04", depends=["already"])
         result = self.explore({"plan": [plan(already_done, final)], "repair": [candidate(GOOD)]})
         self.assertTrue(result["native_success"], result)
         self.assertEqual(len(result["pending"]), 1)
-        self.assertIsNone(self.library.active("P01"))
+        self.assertIsNone(self.library.active("A02"))
         repairs = [request for request in self.provider.requests if request["stage"] == "repair"]
         self.assertEqual(len(repairs), 1)
-        self.assertEqual(repairs[0]["context"]["step"]["atom"], "P02")
+        self.assertEqual(repairs[0]["context"]["step"]["atom"], "A04")
 
     def test_frozen_evaluation_does_not_change_library_files(self):
         self.learn_first()
@@ -506,7 +506,7 @@ class LoopTests(unittest.TestCase):
 
     def test_frozen_evaluation_skips_satisfied_unimplemented_prefix(self):
         self.learn_first()
-        satisfied = step(identifier="satisfied", target=0, atom="P02", predicate="joint_near")
+        satisfied = step(identifier="satisfied", target=0, atom="A04", predicate="joint_near")
         final = step(identifier="final", target=2, depends=["satisfied"])
         config = {"library": str(self.library.root), "evaluations": [
             {"task": {"task": "toy_plant", "goal": 2}, "plan": plan(satisfied, final)}]}
@@ -517,7 +517,7 @@ class LoopTests(unittest.TestCase):
         self.assertTrue(result["evaluations"][0]["success"])
         self.assertTrue(result["evaluations"][0]["steps"][0]["skipped"])
         self.assertEqual(self.factory.instances[-1].steps, 1)
-        self.assertIsNone(self.library.active("P02"))
+        self.assertIsNone(self.library.active("A04"))
         self.assertEqual(before, self.library.state_path.read_bytes())
 
     def test_frozen_final_stats_failure_cannot_report_success(self):
@@ -628,10 +628,10 @@ class LoopTests(unittest.TestCase):
         self.assertEqual([adapter.config for adapter in self.factory.instances[:2]], [task, task])
         self.assertTrue(all(adapter.closed for adapter in self.factory.instances))
         self.assertEqual(len(self.factory.instances), 3)  # Two episodes and independent replay.
-        self.assertEqual(self.library.lessons("P01"), [])
+        self.assertEqual(self.library.lessons("A02"), [])
         self.assertEqual(campaign["status"], "complete")
         self.assertEqual(campaign["promoted_versions"], 1)
-        self.assertEqual(self.library.active("P01")["code"], GOOD)
+        self.assertEqual(self.library.active("A02")["code"], GOOD)
 
     def test_initial_planner_provider_error_remains_nonretryable(self):
         common = self.common({"plan": []})  # ProviderError from an exhausted backend fixture.
@@ -679,14 +679,107 @@ class LoopTests(unittest.TestCase):
 
     def test_replan_can_depend_on_already_completed_prefix(self):
         pre = step(identifier="pre", target=1, predicate="joint_near")
-        fail = step(identifier="failed", target=2, atom="P02", depends=["pre"])
-        suffix = step(identifier="replanned", target=2, atom="P02", depends=["pre"])
+        fail = step(identifier="failed", target=2, atom="A04", depends=["pre"])
+        suffix = step(identifier="replanned", target=2, atom="A04", depends=["pre"])
         result = self.explore({"plan": [plan(pre, fail), plan(suffix)],
                                "repair": [candidate(GOOD), candidate(CLAIM), candidate(GOOD)]},
                               max_attempts=1, max_replans=1)
         self.assertEqual(result["status"], "success", result)
         self.assertTrue(result["native_success"])
         self.assertEqual(result["replans"], 1)
+
+    def test_successful_prefixes_continue_without_failure_replan_budget(self):
+        for complete_flag in (None, False, True):
+            with self.subTest(plan_complete=complete_flag):
+                first = plan(step(identifier="pre", target=1, predicate="joint_near"))
+                if complete_flag is not None:
+                    first["plan_complete"] = complete_flag
+                final = plan(step(identifier="final", depends=["pre"]))
+                result = self.explore({"plan": [first, final], "repair": [candidate(GOOD), candidate(GOOD)]},
+                                      max_attempts=1, max_replans=0)
+                self.assertEqual(result["status"], "success", result)
+                self.assertEqual(result["replans"], 0)
+                self.assertEqual(result["plan_segments"], 2)
+                self.assertEqual(result["continuations"], 1)
+                self.assertEqual(result["stats"]["steps"], 2)
+
+    def test_prefix_native_success_needs_no_extra_plan(self):
+        first = {**plan(step(target=2, predicate="joint_near")), "plan_complete": False}
+        result = self.explore({"plan": [first], "repair": [candidate(GOOD)]})
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["plan_segments"], 1)
+        self.assertEqual([r["stage"] for r in self.provider.requests], ["plan", "repair"])
+
+    def test_successful_atom_stops_at_native_completion_even_with_steps_remaining(self):
+        first = step(identifier="enough", target=2, predicate="joint_near")
+        extra = step(identifier="unneeded", target=3, depends=["enough"])
+        result = self.explore({"plan": [plan(first, extra)], "repair": [candidate(GOOD)]})
+        self.assertEqual(result["status"], "success", result)
+        self.assertTrue(result["native_success"])
+        self.assertEqual(len(result["pending"]), 1)
+        self.assertEqual(result["stats"]["steps"], 1)
+        self.assertEqual([r["stage"] for r in self.provider.requests], ["plan", "repair"])
+
+    def test_successful_atom_at_horizon_skips_remaining_model_requests(self):
+        first = step(identifier="pre", target=1, predicate="joint_near")
+        final = step(identifier="final", target=2, depends=["pre"])
+        result = self.explore({"plan": [plan(first, final)], "repair": [candidate(GOOD)]},
+                              task={"task": "toy_plant", "goal": 2, "horizon": 1})
+        self.assertEqual(result["status"], "plan_complete_task_failed", result)
+        self.assertEqual(result["stop_reason"]["kind"], "episode_terminal_after_prefix")
+        self.assertEqual(len(result["pending"]), 1)
+        self.assertEqual(result["stats"]["steps"], 1)
+        self.assertEqual([r["stage"] for r in self.provider.requests], ["plan", "repair"])
+
+    def test_completed_prefix_at_native_horizon_does_not_request_continuation(self):
+        result = self.explore({"plan": [plan(step(target=1, predicate="joint_near"))],
+                               "repair": [candidate(GOOD)]}, task={"task": "toy_plant", "goal": 2, "horizon": 1})
+        self.assertEqual(result["status"], "plan_complete_task_failed")
+        self.assertEqual(result["stop_reason"]["kind"], "episode_terminal_after_prefix")
+        self.assertEqual(len(result["pending"]), 1)
+        self.assertEqual([r["stage"] for r in self.provider.requests], ["plan", "repair"])
+
+    def test_plan_segment_limit_keeps_partial_evidence(self):
+        result = self.explore({"plan": [plan(step(target=1, predicate="joint_near"))],
+                               "repair": [candidate(GOOD)]}, max_plan_segments=1)
+        self.assertEqual(result["status"], "plan_complete_task_failed")
+        self.assertEqual(result["stop_reason"]["kind"], "plan_segment_budget_exhausted")
+        self.assertEqual(len(result["pending"]), 1)
+        self.assertEqual(result["plan_segments"], 1)
+
+    def test_already_true_prefixes_do_not_loop_or_create_skill_evidence(self):
+        fixtures = {"plan": [plan(step(identifier="skip1", target=0, predicate="joint_near")),
+                             plan(step(identifier="skip2", target=0, predicate="joint_near"))]}
+        result = self.explore(fixtures)
+        self.assertEqual(result["status"], "plan_complete_task_failed")
+        self.assertEqual(result["stop_reason"]["kind"], "planning_no_progress")
+        self.assertEqual(result["stats"]["steps"], 0)
+        self.assertEqual(result["pending"], [])
+        self.assertTrue(all(r["skipped"] for r in result["completed_steps"]))
+        self.assertEqual(len(self.provider.requests), 2)
+
+    def test_continuation_and_failure_replan_keep_distinct_logs(self):
+        pre = plan(step(identifier="pre", target=1, predicate="joint_near"))
+        fail = plan(step(identifier="fail", target=2, depends=["pre"]))
+        final = plan(step(identifier="final", target=2, depends=["pre"]))
+        output = self.destination("segmented")
+        common = self.common({"plan": [pre, fail, final],
+                              "repair": [candidate(GOOD), candidate(CLAIM), candidate(GOOD)]})
+        result = ExplorationLoop(**common, max_attempts=1, max_replans=1).run({"task": "toy_plant"}, output)
+        self.assertEqual(result["status"], "success", result)
+        self.assertEqual(result["replans"], 1)
+        self.assertEqual(result["continuations"], 1)
+        self.assertEqual(result["plan_segments"], 3)
+        self.assertEqual([read_json(output / f"plan_{index}.json") for index in range(3)], [pre, fail, final])
+        paths = sorted((output / "attempts").glob("*/record.json"))
+        self.assertEqual([p.parent.name for p in paths],
+                         ["plan00_step00_try00", "plan01_step01_try00", "plan02_step01_try00"])
+        self.assertEqual(read_json(result["pending"][1])["entry_trace"][-1]["success"], False)
+
+    def test_plan_segment_limit_requires_positive_integer(self):
+        for value in (None, 0, -1, True, 1.5):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "max_plan_segments"):
+                ExplorationLoop(**self.common({}), max_plan_segments=value)
 
     def test_contract_error_is_repaired_within_attempt_budget(self):
         invalid = 'def skill(api, params):\n    import os\n    return params\n'
